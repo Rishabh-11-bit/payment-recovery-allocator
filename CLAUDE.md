@@ -1,44 +1,162 @@
 # CLAUDE.md
 
-Project context for agentic coding sessions. Read this before proposing changes.
+Project context for agentic coding sessions. Read fully before proposing changes.
 
 ---
 
 ## What this is
 
-A payment-failure recovery layer for Indian payment rails, built as a submission for the
-Razorpay AI Builder Internship 2026. Solo build, ~16 days, ~5h/day.
+A mandate retry sequencer for UPI Autopay and card subscriptions — a system that decides how
+to spend a regulator-capped budget of payment attempts across failures with different recovery
+characteristics.
 
-It will be judged by a Razorpay engineering panel via **architecture review and technical
-interview**, not by a demo-day audience. Optimise for defensibility under interrogation,
-not for visual polish.
+Submission for the **Razorpay AI Builder Internship 2026, Track 03 (AI Revenue Recovery)**.
+Solo build, ~15 days, ~5h/day. Judged by a Razorpay engineering panel via **architecture
+review and technical interview**. Optimise for defensibility under interrogation.
+
+## The bar (this is the rubric — there is no other)
+
+> Don't just identify the problem. Show **measured money recovered across a batch**, with
+> **compliant escalation**, **stopping rules**, and an **audit trail**.
+
+All four are required. In particular, the batch money figure must be produced — not refused.
+What we control is how precisely it is characterised.
+
+## Thesis
+
+> Retry volume is capped at four attempts by NPCI. Execution is barred from peak hours and
+> requires 24h advance notice. There is almost no timing freedom left — so the highest-value
+> decision is **not spending an attempt on a failure that cannot recover.** The documented
+> baseline spends three of four attempts on expired cards and cancelled mandates.
 
 ---
 
-## The one-line thesis
+## Prior art — do not duplicate
 
-> Retry volume is capped by regulation. The open problem is not *retry better*, it is
-> **how to allocate a fixed attempt budget** across failures with different recovery
-> dynamics — and how to prove that allocation works without inventing the evidence.
-
----
-
-## Prior art — what Razorpay already has
-
-This is the most important section in this file. **Do not propose features that duplicate
-these.** Flag it immediately if a change starts drifting toward them.
-
-| Existing | What it does | Boundary |
+| Existing | What it does | Our boundary |
 |---|---|---|
-| Optimizer / Smart Router | ML-driven **in-session** routing, fallback to alternate provider on failure | We are **out-of-session** — the customer has already left |
-| Subscriptions retry | Fixed T+1 / T+2 / T+3 schedule, cause-blind, then halt | This is our **baseline arm**, reimplemented from their docs, not a strawman |
-| Intelligent Retry Engine (beta) | Merchant-configurable retry strategies for recurring debits | Scope check pending — see Open Questions |
-| WhatsApp recovery links | Branded recovery links on debit failure | We do not build messaging. Console adapter only. |
+| Optimizer / Smart Router | Routes across gateways/aggregators **in-session**. Params: channel, method, BIN, card type, brand, issuer, bank, amount. **Failure reason is not a routing parameter.** On-demand feature, requires support request. | Different axis: they pick *which gateway*; we decide *whether to spend an attempt* given why the last one failed |
+| Subscriptions retry | Fixed schedule, cause-blind (see below) | This is **Arm A**, reimplemented from their docs. Not a strawman |
+| Intelligent Retry Engine (beta, FTX 2026) | Merchant-**configurable** retry strategies + templates. WhatsApp branded recovery links. Recurring-only | It is a configuration surface, not a decision engine. We are what would sit behind an "auto" setting. Complementary, not competing |
+| Priority-based routing | Creates temporary 20-min downtimes when a gateway's SR drops, routes to next priority | Gateway *selection*. Ours is retry *admission control*. State the distinction explicitly |
 
-**Our two surviving gaps:**
-1. Allocation of a capped attempt budget (1 original + 3 retries) rather than retry timing
-2. The aggregation point — every shipped product optimises for a single merchant; nobody
-   models gateway-level effects, even though network load is the stated rationale for the cap
+---
+
+## Regulatory constraints — these define the action space
+
+NPCI guidelines effective 1 Aug 2025 (press release 21 May 2025; accessed via secondary
+sources, primary circular not publicly indexed — cite as such).
+
+- **Attempt cap:** 1 initial execution + up to 3 retries per mandate, by sequence number. Four
+  total, ever.
+- **Peak-hour ban:** Autopay executions must occur in **non-peak hours only**. Peak is
+  **10:00–13:00 and 17:00–21:30 IST**.
+- **Moderated TPS:** PSPs directed to initiate executions at moderated TPS; NPCI may apply
+  rate limiters to avoid spikes. *This is the regulatory basis for the storm governor — not a
+  speculative feature.*
+- **Pre-debit notification:** customer must receive SMS/app notification ≥24h before each
+  recurring charge, with exact amount and cancel option. **If the PDN fails, the debit fails —
+  it is a prerequisite.** PDN requests at/after 23:50 are rejected when debit_date = T+1.
+- **AFA:** transactions over ₹15,000 require PIN entry each time.
+- Non-compliance: UPI API access restrictions, penalties, onboarding suspension.
+
+**Consequence: `ATTEMPT_NOW` does not exist for mandate debits.** Every attempt is decided
+≥24h ahead and must land in a non-peak window. Do not propose sub-daily retry timing.
+
+*Open:* `auto_represent_on_failure` on the PDN reportedly allows automatic re-presentation of
+technically-declined presentations — possibly without a fresh PDN. If true, INFRASTRUCTURE
+failures have timing freedom LIQUIDITY ones don't. Unverified.
+
+---
+
+## The baseline (Arm A) — rail-parameterised, cause-blind
+
+| Rail | Behaviour |
+|---|---|
+| Card | T+1, T+2, T+3 daily, then `halted` |
+| UPI | T+1, T+2, T+3 daily, then `halted` |
+| Emandate | Async — retry only on confirmation/rejection of prior attempt, can exceed 24h. Charge day shifts for bank holidays: T → T−1; if both T and T−1 are holidays, T → T−3 |
+
+**The retry model never references the failure reason.** Documented failure causes are expired
+card, bank-blocked card, insufficient balance, cancelled mandate — and all four get identical
+treatment. This is the source of the primary claim.
+
+## Rail migration is a directed graph
+
+| From | → Card | → UPI | → Emandate |
+|---|---|---|---|
+| Card | Yes | Yes | Yes |
+| UPI | Yes | No | No |
+| Emandate | Yes | No | No |
+
+`SWITCH_RAIL` must validate against this. **Manual charging of a domestic card is not
+supported** — card re-attempts are customer-mediated (hosted page / card change), never
+programmatic.
+
+*Open, not asserted:* Razorpay does not document why UPI cannot migrate to UPI. Likely because
+the target rail needs re-authorisation and only cards re-authorise synchronously in-session.
+Recorded as a question, not a claim.
+
+---
+
+## Classifier — derived from documented fields, not invented
+
+Key is **`(method, source, step, reason)`** — the value space is method-partitioned.
+
+| Method | `source` values |
+|---|---|
+| Cards | `customer`, `business`, `internal`, `gateway`, `issuer_bank` |
+| UPI | + `customer_psp`, `network`, `beneficiary_bank` |
+| Netbanking | `customer`, `business`, `internal`, `issuer_bank` |
+| Emandate | `customer`, `bank`, `business`, `internal`, `gateway`, `issuer_bank` |
+
+There is **no `razorpay` source** (it is `internal`) and no bare `bank` except for Emandate.
+
+`step` localises better than `source`. UPI exposes ~14 steps. Notably:
+
+| step | Meaning | Class |
+|---|---|---|
+| `payment_debit_response` | Customer's bank declined | LIQUIDITY or INFRASTRUCTURE by `source` |
+| `payment_authentication` | Customer reached, never entered M-PIN | ATTENTION — retry has ~zero marginal value |
+| `payment_initiation` / `payment_creation` | Broke before reaching customer | INFRASTRUCTURE |
+| `mandate_creation` | Mandate never registered | Registration failure, distinct from debit failure |
+| `card_enrollment_check` | Card not 3DS-enrolled | TERMINAL-adjacent |
+
+Four classes: `INFRASTRUCTURE`, `LIQUIDITY`, `ATTENTION`, `TERMINAL`. Deterministic rules over
+a lookup table. LLM only for parsing free-text `description` into schema — never in the
+decision path.
+
+**Misclassification costs are asymmetric.** INFRASTRUCTURE→TERMINAL surrenders a recoverable
+payment. TERMINAL→INFRASTRUCTURE burns capped attempts and risks escalating a risk flag.
+Tune the operating point to a cost matrix, not accuracy. Low confidence falls toward the
+cheaper error.
+
+*Note:* UPI Collect deprecated 28 Feb 2026 — **but UPI Mandates (execute/modify/revoke) are
+exempt**, so recurring scope survives. Intent-flow `step` distributions differ from Collect.
+
+---
+
+## Safety — the invariant
+
+> **Never create a payment obligation outside the original order's attempt chain while that
+> chain is within its late-authorisation window.**
+
+Late auth is documented: no bank response → `Created` for 10 min → `Failed` on timeout →
+**Razorpay polls the bank for 3 days** → may become `Authorized`. Under 0.5% of payments;
+uncaptured late-auth payments auto-refund in 5 days.
+
+**Every T+1/T+2/T+3 retry lands inside that 72h window.**
+
+Mitigation is architectural, not lock-based: **the Orders API clubs multiple attempts against
+the same order.** If one succeeds and another late-authorises, the late one is refunded
+immediately and only the successful payment is marked against the order. Therefore **reuse the
+original `order_id`**; recovery Payment Links carry `reference_id` linking back to it.
+
+### Webhook semantics (documented — drives C1 and C7)
+
+At-least-once delivery. Duplicates expected. **`x-razorpay-event-id` is the dedup key.**
+Non-2xx → exponential backoff for 24h → webhook disabled. **Events may arrive out of order.**
+Response slower than 5s is treated as timeout and resent → acknowledge fast, decide in a worker.
 
 ---
 
@@ -48,107 +166,112 @@ these.** Flag it immediately if a change starts drifting toward them.
 Ingest → Normalize → Classify → Allocate → Guard → Execute → Reconcile → Measure
 ```
 
-- **Ingest** — dedupe by event id, immutable raw store, **refresh authoritative payment
-  state before any decision**. `payment.failed` is provisional; a payment can later become
-  authorized.
-- **Classify** — four classes: `INFRASTRUCTURE`, `LIQUIDITY`, `ATTENTION`, `TERMINAL`.
-  Deterministic rules over a lookup table.
-- **Allocate** — spends a budget of 4 attempts. Actions: `ATTEMPT_NOW`, `SCHEDULE_AT`,
-  `RECOVERY_LINK`, `HOLD`, `SURRENDER`.
-- **Guard** — every action passes through. Attempt cap, cooldown, contact budget, risk block,
-  order validity, payment-not-already-succeeded, idempotency.
-- **Execute** — adapter pattern. `SimulatorExecutor` is primary. `RazorpayExecutor` is a
-  demonstrated integration, **not** the backbone.
-- **Reconcile** — no recovery is counted without a payment linked to the original order.
-- **Measure** — three arms over identical data, swept across parameterized worlds.
+**Allocate** (not "policy engine"): spends a budget of 4 across a window.
+Actions: `SCHEDULE_AT(t)`, `RECOVERY_LINK`, `REORDER_RAILS`, `EXCLUDE_INSTRUMENT`, `HOLD`,
+`SURRENDER`. No `ATTEMPT_NOW` — see PDN constraint.
 
-### The stated invariant
+**Guard**: attempt cap, non-peak window check, PDN lead-time check, cooldown, contact budget,
+risk block, order validity, payment-not-already-succeeded, idempotency key
+`recovery:{payment_id}:{policy_version}:{attempt_n}`, storm governor (jitter + per-issuer
+admission ceiling).
 
-> **Never create a second payment obligation while the first is in a non-terminal state.**
+**Execute**: adapter pattern. `SimulatorExecutor` primary; `RazorpayExecutor` demonstrated only.
 
-This is the double-charge property. It is asserted by property-based tests over randomized
-adversarial event orderings, not by a handful of hand-written cases.
+### Rail actions are graduated by confidence
+
+Payment Links support `options.checkout.method` (coarse on/off) and
+`options.checkout.config.display.blocks` (instrument-level — remove a specific bank, restrict
+by issuer/BIN/card type), plus `sequence` for ordering and
+`preferences.show_default_blocks: false` for allowlist construction.
+
+- **High confidence** → exclude the specific degraded instrument (not the whole method)
+- **Moderate confidence** → reorder only. Promotes the likely rail, removes nothing
+- Excluding on a misdiagnosis makes recovery *harder*. Reorder is the default; exclusion is
+  the high-confidence case.
+
+---
+
+## Claim structure
+
+| Tier | Claim | Rests on |
+|---|---|---|
+| Primary | Attempts and contacts saved on structurally-unrecoverable failures | **Definitional** — P(retry succeeds \| expired card / cancelled mandate) = 0 |
+| Secondary | Better placement of surviving attempts | Ordinal assumptions only. **Deliberately weak** — regulation leaves little timing freedom, and we say so |
+| Required | Money recovered across the batch | Simulated, three arms, swept across sampled worlds, with a holdout harness for real traffic |
+
+Lead with the primary. Produce the batch figure — the bar requires it — but always alongside
+the robustness sweep and its stated breaking point.
+
+## Ordinal vs cardinal
+
+Policy may depend on **ordinal** facts ("liquidity recovers better later than sooner").
+Policy may **not** depend on **cardinal** facts ("41% on day 30").
+
+Cardinal values live in the *simulator*, never the *policy*, are sampled from ranges during the
+robustness sweep, and are listed in `ASSUMPTIONS.md` with sources. If a change makes the policy
+read a specific probability, stop and flag it.
+
+### Calibration sources (real, cite them)
+
+- ~20 million AutoPay mandates revoked monthly, mainly insufficient balance (NPCI data via
+  Business Standard)
+- 808M mandate executions July 2025, up from 392M YoY; 50M new mandates registered
+- UPI Autopay failure rates ~8–15% vs ~2–3% for card mandates
+- Razorpay: involuntary churn ≈30% of attrition; ~30% drop off pre-registration; ~20% of
+  subsequent debits fail; ~18% cancel mandates
 
 ---
 
 ## Hard rules
 
 **Never:**
-- Put an LLM in the money-decision path. LLM use is limited to parsing inconsistent error
-  descriptions into the schema. The allocator is deterministic.
-- Train a model. There is no real labelled data; a model fit to our own generator learns the
-  numbers we typed in. This is a correctness argument, not a scope one.
-- Build live webhook infrastructure as the spine, a React dashboard, real SMS/WhatsApp, or a
-  multi-gateway abstraction.
-- Add a cardinal assumption without recording it in `ASSUMPTIONS.md` with a source.
-- Silently swallow a guard block. Every refusal is logged with its reason.
+- LLM in the money-decision path
+- Train a model — no real labels; a model fit to our own generator learns the numbers we typed
+- Propose sub-daily retry timing for mandate debits (PDN + peak-hour constraints)
+- Model a programmatic domestic card retry
+- Live webhook infrastructure as the spine, React dashboard, real SMS/WhatsApp, multi-gateway
+  abstraction
+- Add a cardinal assumption without recording it in `ASSUMPTIONS.md` with a source
+- Silently swallow a guard block
 
 **Always:**
-- Config-driven. Every limit lives in YAML so the full comparison can be re-run with changed
-  parameters in seconds. This is a deliberate feature — the panel will want to poke at it.
-- Append-only audit events. Every decision reconstructable end to end.
-- Deterministic and seeded. `make reproduce` regenerates every number in the README.
-- Small, frequent, legibly-messaged commits.
-
----
-
-## Ordinal vs cardinal
-
-The policy may depend on **ordinal** facts — "liquidity failures recover better later than
-sooner" — which hold in any plausible world.
-
-The policy may **not** depend on **cardinal** facts — "liquidity failures recover at 41% on
-day 30" — which are invented.
-
-Cardinal values may appear in the *simulator*, never in the *policy*. Every cardinal value in
-the simulator is sampled from a range during the robustness sweep, and is listed in
-`ASSUMPTIONS.md` with its source.
-
-If a proposed change makes the policy read a specific probability, stop and flag it.
-
----
+- Config-driven YAML — the full comparison must re-run with changed parameters in seconds
+- Append-only audit events; every decision reconstructable
+- Deterministic and seeded; `make reproduce` regenerates every README number
+- Small, frequent, legibly-messaged commits
 
 ## Do not write these for me
 
-These are the components the panel will interrogate. They must be authored by hand so they
-can be defended line by line. Offer review, tests, refactoring and typing — do not offer
-implementations.
+Panel will interrogate these; they must be hand-authored. Offer review, tests, typing —
+not implementations.
 
-- The attempt allocator logic (`allocator/`)
-- The four-class taxonomy and its mapping rules
-- The misclassification cost matrix and confidence thresholds
+- The attempt allocator (`allocator/`)
+- The four-class taxonomy mapping and the cost matrix
 - `ASSUMPTIONS.md`, `PRIOR_ART.md`, `NOT_BUILT.md`, `THREAT_MODEL.md`
 
-**Delegate freely:** schemas and dataclasses, simulator scaffolding, world-parameterization
-plumbing, Hypothesis generators (invariants specified by hand), the Razorpay adapter, report
-generation, CLI plumbing, test fixtures, type hints, refactors.
-
----
+**Delegate freely:** schemas, dataclasses, simulator scaffolding, world-parameterisation
+plumbing, Hypothesis generators (invariants specified by hand), Razorpay adapter, report
+generation, CLI plumbing, fixtures, refactors.
 
 ## Stack
 
-Python 3.11+. Pytest + Hypothesis. SQLite. Pydantic for schemas. YAML config. Click or Typer
-for the CLI. Static HTML report — no frontend framework. Pinned dependencies.
+Python 3.11+. Pytest + Hypothesis. SQLite. Pydantic. YAML config. Typer. Static HTML report.
+Pinned deps. No dependency added without asking.
 
-No dependency is added without being asked first.
+Test mode: `failure@razorpay` VPA and card `4000 0000 0000 0002` generate real failure
+payloads for fixtures. `order.attempts` increments per failed attempt against an order.
 
----
+## Still open
 
-## Open questions — do not assume answers
-
-- Does the Intelligent Retry Engine cover **one-time** payment failures, or only recurring
-  debits? Scope depends on this.
-- The 1+3 retry cap is documented by Razorpay; primary NPCI verification pending. Until
-  verified, phrase as *"as documented by Razorpay"* — never as a regulator citation.
-- Is a payment-failure nudge promotional or transactional under the DLT framework? Different
-  registration, consent and timing rules follow. Treated as an open question in the repo with
-  both implications stated, not guessed.
-
----
+- NPCI primary circular text — cite secondary sourcing explicitly until found
+- Whether `auto_represent_on_failure` bypasses a fresh PDN for technical declines
+- One PSP's docs claim a failed *first* presentation auto-revokes the mandate. Severe if true.
+  **Verify before relying on it**
+- Bank-holiday calendar for T−1 / T−3 shifting — which calendar, varies by bank?
+- Is a payment-failure nudge promotional or transactional under DLT? State both implications
 
 ## Definition of done
 
-A change is done when:
 1. It has a test
 2. Its decisions are visible in the audit trail
 3. `make reproduce` still passes
