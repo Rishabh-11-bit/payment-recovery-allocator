@@ -43,9 +43,14 @@ is less differentiating.
 
 | # | Entry | Tag | Why it earns a slot |
 |---|-------|-----|---------------------|
-| 1 | _(fill in)_ | | |
-| 2 | | | |
-| 3 | | | |
+| 1 | 001 — nearly built a duplicate | `#domain` `#scope` | Audited the incumbent's shipped stack before building, and let the result reframe the project rather than proceeding anyway |
+| 2 | 002 — evaluation measured my own assumptions | `#evaluation` `#data` | Identified that a synthetic-data uplift figure proves nothing, and split one claim into three with proof appropriate to each |
+| 3 | 003 — strongest result needs no invented probabilities | `#domain` `#evaluation` | Found a claim that rests on a definition rather than a parameter, by reading the retry model line by line |
+| 4 | 004 — half the action space does not exist | `#domain` `#architecture` | Discovered the platform cannot execute the actions the allocator was designed to select, in Phase 0 rather than at integration |
+
+**Not shortlisted:** 005 is the same constraint as 004, found a second time as a naming
+problem. 004 is the discovery and the stronger entry; presenting both would spend two of four
+slots on one insight.
 
 ---
 
@@ -292,6 +297,8 @@ constraint had been discovered but not encoded where it would be enforced. A nam
 the difference between "the system does this" and "the customer might do this" will eventually
 be measured as though the two were equivalent, which would inflate the arm-C result with moves
 that never happened. Caught in prose, before any code depended on it.
+
+**Form note:** not shortlisted. Same constraint as 004, which is the stronger entry.
 
 ---
 

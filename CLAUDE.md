@@ -318,6 +318,31 @@ read a specific probability, stop and flag it.
 
 ---
 
+## Scope discipline
+
+15 days, solo, ~5h/day. ~91h of work against 64–96h available. No slack.
+
+**Tier 1 — no submission without these:** C1 event core, C2 classifier,
+C3 allocator, C4 guard, C5 simulator + three arms, C6 audit ledger.
+
+**Tier 2 — this is what wins:** C7 property tests, C8 robustness sweep,
+C9 calibration, C10 rail actions, C11 storm governor, C12 holdout harness.
+
+**Cut in this order if behind:** static HTML report → decision-trace CLI →
+chargeback penalty term → holdout harness → cost matrix.
+
+**Never cut:** C7, C8, NOT_BUILT.md, or pitch/interview prep.
+
+**Explicitly not built:** trained models, live webhook infrastructure as the
+spine, React dashboard, real SMS/WhatsApp, multi-gateway abstraction,
+portfolio optimisation, contextual bandits, goodwill scores, calibration loops.
+If a change drifts toward any of these, stop and flag it.
+
+Build to "defensible in an architecture review," not to production standard.
+Sessions are single-objective — do not drift into the next component.
+
+---
+
 ## Hard rules
 
 **Never:**
