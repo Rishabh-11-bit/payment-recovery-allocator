@@ -244,7 +244,58 @@ evaluation from measuring impossible moves.
 
 ---
 
-## 005 — _(next entry)_
+## 005 — One name was hiding two different actions
+
+**Date:** Phase 0
+**Tags:** `#architecture` `#domain`
+
+**Problem**
+The action space conflated two operations under a single name, `SWITCH_RAIL`: mandate-level
+rail migration, and link-level checkout shaping. They read as the same action — "change which
+rail the customer pays on" — and nothing in the type distinguished them.
+
+**Diagnosis**
+They differ in **who executes**.
+
+Link-level shaping the system performs directly: a recovery Payment Link's `options.checkout`
+reorders methods or removes a specific degraded instrument, and that takes effect the moment
+the link is created.
+
+Mandate-level migration the system cannot perform at all. Manual charging of a domestic card
+is not supported, so moving a subscription onto Card is necessarily customer-mediated — via
+the hosted page or a card change. The system can only *offer* it.
+
+One is an instruction. The other is an invitation that may never be accepted.
+
+**Options**
+1. Keep the single name and document the difference in comments — rejected. The distinction is
+   executable-versus-not; a comment does not stop the allocator emitting an action the platform
+   cannot carry out, and it does not survive into the audit trail
+2. Split into two named actions so the type carries the distinction
+
+**Resolution**
+Option 2. `SWITCH_RAIL` became `OFFER_RAIL_MIGRATION` — the verb states that the system offers
+and the customer acts — and it validates against the directed migration graph from entry 004.
+Link-level shaping stays as `REORDER_RAILS` and `EXCLUDE_INSTRUMENT`.
+
+Final action list: `SCHEDULE_AT(t)`, `RECOVERY_LINK`, `OFFER_RAIL_MIGRATION`, `REORDER_RAILS`,
+`EXCLUDE_INSTRUMENT`, `HOLD`, `SURRENDER`. Still no `ATTEMPT_NOW`.
+
+Surfaced by a documentation-consistency audit run before any code was written: the Allocate
+section listed one set of actions and the rail-migration section referenced another, and the
+two could not both be right.
+
+**Why it mattered**
+Entry 004 established that the allocator must not select actions the platform cannot execute.
+This is the same failure returning as a naming problem rather than a modelling one — the
+constraint had been discovered but not encoded where it would be enforced. A name that hides
+the difference between "the system does this" and "the customer might do this" will eventually
+be measured as though the two were equivalent, which would inflate the arm-C result with moves
+that never happened. Caught in prose, before any code depended on it.
+
+---
+
+## 006 — _(next entry)_
 
 **Date:**
 **Tags:**
