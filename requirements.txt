@@ -1,0 +1,10 @@
+# Pinned. Python 3.11+.
+# No dependency is added here without asking first (CLAUDE.md, Stack).
+pydantic==2.12.5
+PyYAML==6.0.3
+typer==0.25.0
+
+# Test-only. hypothesis backs C7 (property-based invariant tests) and is on the
+# never-cut list, so it is pinned now even though C7 is not yet written.
+pytest==8.0.0
+hypothesis==6.140.3

@@ -1,0 +1,44 @@
+# Every limit lives here. Nothing in recovery/ hardcodes a threshold.
+# The full three-arm comparison must re-run with changed parameters in seconds,
+# so the panel can change them live.
+
+policy:
+  # Participates in the idempotency key: recovery:{payment_id}:{policy_version}:{attempt_n}
+  # Bumping this deliberately re-opens decisions that were already made.
+  version: "0.1.0"
+
+database:
+  path: "data/recovery.db"
+
+ingest:
+  # Razorpay treats a response slower than this as a timeout and resends.
+  # We acknowledge inside this budget and decide in a worker.
+  ack_budget_seconds: 5.0
+  accepted_events:
+    - payment.failed
+
+worker:
+  batch_size: 50
+  # A claimed job older than this is considered abandoned and may be re-claimed.
+  claim_timeout_seconds: 300
+  max_attempts_per_job: 3
+
+late_auth:
+  # A payment marked Failed can still become Authorized while Razorpay polls the
+  # bank. Documented: ~3 days. Inside this window the webhook body is not
+  # authoritative and state must be re-fetched before any decision.
+  poll_window_days: 3
+  # Refuse to decide if the authoritative refresh fails. Never fall back to the
+  # webhook payload -- that is the whole point of the refresh.
+  require_state_refresh: true
+
+# Consumed by C4 (guard). Recorded here from day one so the NPCI constants live
+# in config rather than in code. NOT read by C1.
+regulatory:
+  attempt_cap: 4            # 1 initial execution + 3 retries, ever
+  pdn_lead_time_hours: 24
+  pdn_cutoff_ist: "23:50"   # PDN requests at/after this are rejected for debit_date = T+1
+  afa_threshold_inr: 15000
+  peak_windows_ist:
+    - ["10:00", "13:00"]
+    - ["17:00", "21:30"]

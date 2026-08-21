@@ -347,13 +347,12 @@ Sessions are single-objective — do not drift into the next component.
 
 **Never:**
 - LLM in the money-decision path
-- Train a model — no real labels; a model fit to our own generator learns the numbers we typed
 - Propose sub-daily retry timing for mandate debits (PDN + peak-hour constraints)
 - Model a programmatic domestic card retry
-- Live webhook infrastructure as the spine, React dashboard, real SMS/WhatsApp, multi-gateway
-  abstraction
 - Add a cardinal assumption without recording it in `ASSUMPTIONS.md` with a source
 - Silently swallow a guard block
+- Anything on the **Explicitly not built** list under *Scope discipline* above — that list is
+  the single source of truth for out-of-scope work; do not restate it here
 
 **Always:**
 - Config-driven YAML — the full comparison must re-run with changed parameters in seconds
