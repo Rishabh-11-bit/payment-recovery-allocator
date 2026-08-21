@@ -2,7 +2,7 @@
 
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
-**Status:** Phase 0 — prior art audit and domain grounding. No application code yet.
+**Status:** Phase 1 — C1 event core landed. C2 classifier and C3 allocator not yet built.
 
 ---
 
@@ -34,13 +34,35 @@ See `PRIOR_ART.md` for the full boundary analysis.
 
 _(pending)_ documents are Phase 5 deliverables and are not yet written.
 
+## Running
+
+```
+pip install -r requirements.txt
+python -m pytest
+python -m recovery.reproduce
+```
+
 ## Reproducing results
 
 ```
 python -m recovery.reproduce
 ```
 
-Fixed seed. Regenerates every number in this README from scratch.
+Recreates the database from scratch and regenerates every claim in this README.
+Nothing goes in this README that this command does not reproduce.
+
+**C1 — event core.** Replaying one webhook delivery ten times produces exactly one
+case and one decision, with the full sequence visible in the audit trail: one
+`webhook.received`, nine `webhook.duplicate_ignored`, one `payment.state_refreshed`,
+one `case.opened`, one `decision.recorded`.
+
+Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
+at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and
+logged, never rejected: 24h of non-2xx disables the webhook.
+
+Decisions read authoritative payment state fetched from the API, never the webhook
+payload. A payment marked `Failed` can become `Authorized` for up to three days
+while Razorpay polls the bank, and every T+1/T+2/T+3 retry lands inside that window.
 
 ## License
 
