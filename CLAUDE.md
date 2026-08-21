@@ -29,6 +29,46 @@ What we control is how precisely it is characterised.
 > decision is **not spending an attempt on a failure that cannot recover.** The documented
 > baseline spends three of four attempts on expired cards and cancelled mandates.
 
+## The objective function — read this before touching the allocator
+
+**The scarce resource is the mandate, not the attempt.** Attempts are the currency spent
+against it.
+
+A failed debit costs one transaction. A revoked mandate costs the subscriber's entire
+remaining lifetime. Razorpay's own figures: ~20M mandates revoked monthly (mainly insufficient
+balance), involuntary churn ≈30% of all attrition. Their entire Revenue-Protect positioning is
+churn, not transactions.
+
+Consequences for the allocator:
+
+- Every attempt carries a cost in **mandate-survival probability**, not just retry cost.
+  Three failure notifications in three days to a customer who is broke is a good way to get the
+  mandate cancelled from their UPI app.
+- `SURRENDER` is not "give up on this money." It is **"protect the annuity"** — a positive
+  action with a defensible value. This is what makes the stopping rules productive rather than
+  merely defensive.
+- `halted` is the state we are actually avoiding — halted subscriptions need manual
+  intervention to recover.
+- Escalation threshold is principled: escalate when mandate risk outweighs recovery value,
+  not at an arbitrary attempt count.
+
+**This is ordinal, not cardinal.** "Repeated failure notifications increase revocation
+probability" is obviously true and needs no invented hazard rate. Do not let a change
+introduce one.
+
+### Reporting rules for this — strict
+
+The bar requires **money recovered across a batch**. That stays the headline figure. Mandate
+survival is **additive, never a replacement**. Do not demote the rupee figure.
+
+- **Mandates preserved → report as a count.** Definitional and observable.
+- **LTV → report as a sensitivity only, never a point estimate.** "At 6 months average
+  remaining lifetime, ₹X; at 12 months, ₹Y." Sweep remaining-lifetime in the robustness
+  harness like any other cardinal parameter.
+
+A single headline LTV number is a cardinal claim dressed as a result. It would forfeit the
+credibility the entire project rests on. If a change proposes one, stop and flag it.
+
 ---
 
 ## Prior art — do not duplicate
@@ -195,12 +235,15 @@ by issuer/BIN/card type), plus `sequence` for ordering and
 
 | Tier | Claim | Rests on |
 |---|---|---|
+| Required | Money recovered across the batch | Simulated, three arms, swept across sampled worlds, with a holdout harness for real traffic. **The bar demands this — never omit it** |
 | Primary | Attempts and contacts saved on structurally-unrecoverable failures | **Definitional** — P(retry succeeds \| expired card / cancelled mandate) = 0 |
-| Secondary | Better placement of surviving attempts | Ordinal assumptions only. **Deliberately weak** — regulation leaves little timing freedom, and we say so |
-| Required | Money recovered across the batch | Simulated, three arms, swept across sampled worlds, with a holdout harness for real traffic |
+| Primary | Mandates preserved (count) | Ordinal — repeated failure contact raises revocation probability |
+| Secondary | Better placement of surviving attempts | Ordinal only. **Deliberately weak** — regulation leaves little timing freedom, and we say so |
+| Sensitivity | Lifetime value protected | **Never a point estimate.** Swept over remaining-lifetime assumptions |
 
-Lead with the primary. Produce the batch figure — the bar requires it — but always alongside
-the robustness sweep and its stated breaking point.
+Report the batch figure first because the bar asks for it, then show that a larger quantity —
+the mandate — was being protected at the same time. Always alongside the robustness sweep and
+its stated breaking point.
 
 ## Ordinal vs cardinal
 
