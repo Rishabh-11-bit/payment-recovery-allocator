@@ -2,8 +2,8 @@
 
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
-**Status:** Phase 1 — C1 event core and C2 classifier machinery landed. The classifier's
-taxonomy and cost matrix are not yet authored; C3 allocator not yet built.
+**Status:** Phase 1 — C1 event core, C2 classifier machinery, C5 simulator with arms A and B.
+The classifier's taxonomy and cost matrix are not yet authored; C3 allocator (arm C) not built.
 
 ---
 
@@ -68,6 +68,24 @@ output: only a HIGH band permits excluding an instrument, because excluding on a
 misdiagnosis makes recovery harder. A LOW band discards the predicted class and asks
 the cost matrix which class has the lowest worst-case cost of being wrong — the
 cheaper error, not the more likely class.
+
+**C5 — simulator, arms A and B.** A synthetic mandate-debit batch with a rail dimension
+(Card / UPI / Emandate). Every cardinal value is sampled from a range in
+`config/worlds.yaml`, never fixed — C8's sweep is many worlds, so parameterisation is
+structural rather than retrofitted.
+
+Ground truth is hidden: arms see only the emitted payload, and emission is deliberately
+noisy so misclassification costs bind rather than decorate. The environment — not the
+arms — enforces the attempt cap, the non-peak windows and the PDN lead time, so no arm
+can benefit from ignoring them, and every rejection is counted and attributed.
+
+Arm A is Razorpay's documented schedule, reimplemented and cause-blind: Card and UPI at
+T+1/T+2/T+3 then halted, Emandate asynchronous with bank-holiday shifting. Arm B adds one
+generic recovery link per failure, so A→B isolates the value of contact and B→C will
+isolate the value of cause-awareness.
+
+**The figures `reproduce` prints for C5 are a single world draw and are not a result.**
+A defensible number needs C8's sweep across sampled worlds and its stated breaking point.
 
 Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
 at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and

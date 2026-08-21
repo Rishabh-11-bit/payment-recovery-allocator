@@ -1,0 +1,113 @@
+# =============================================================================
+# Simulator world parameters. CARDINAL VALUES LIVE HERE AND NOWHERE ELSE.
+#
+# Every value is a **range**, not a point. A world is one sample from these
+# ranges; C8's robustness sweep samples many and reports where the policy loses.
+# Nothing in the policy path may read any of these -- see CLAUDE.md, "Ordinal vs
+# cardinal". If a policy change starts reading a number from this file, stop.
+#
+# Every range needs an entry in ASSUMPTIONS.md with a source. Ranges marked
+# UNSOURCED below are placeholders chosen to be wide rather than accurate; a
+# wide unsourced range is honest, a narrow one is a fabrication.
+# =============================================================================
+
+horizon_days: 10
+
+batch:
+  size: 500
+  # Failure mix. Calibrated loosely against Razorpay's published figure that
+  # ~20% of subsequent debits fail, mainly insufficient balance (NPCI via
+  # Business Standard). The split between the four classes is UNSOURCED.
+  class_mix:
+    INFRASTRUCTURE: [0.10, 0.25]
+    LIQUIDITY:      [0.40, 0.60]
+    ATTENTION:      [0.10, 0.25]
+    TERMINAL:       [0.10, 0.25]
+
+  # UPI Autopay failure rates run ~8-15% vs ~2-3% for card mandates, so a
+  # failure batch skews UPI relative to the population of mandates.
+  rail_mix:
+    upi:      [0.55, 0.75]
+    card:     [0.15, 0.30]
+    emandate: [0.05, 0.15]
+
+  # Subscription ticket sizes, paise. Kept under the AFA threshold (Rs 15,000)
+  # so no case in the batch needs per-transaction PIN entry -- that is a
+  # separate flow and modelling it here would confound the comparison.
+  amount_paise: [9900, 129900]
+
+# --- Hidden ground truth ----------------------------------------------------
+# The recovery dynamics the policy never sees. An arm observes only the emitted
+# failure payload; these govern what actually happens when it acts.
+
+recovery:
+  # P(a retry succeeds) by class, as a function of days since the original
+  # failure. `base` applies at day 1; `per_day` is the change per additional
+  # day, clamped into [0, cap].
+  #
+  # TERMINAL is not a range and is not sampled. P = 0 is definitional -- an
+  # expired card or a cancelled mandate does not recover on a retry, and the
+  # primary claim rests on that being a definition rather than a parameter.
+  INFRASTRUCTURE:
+    base:    [0.35, 0.60]   # transient; often gone by the next day
+    per_day: [-0.06, -0.02] # UNSOURCED: decays as the incident recedes
+    cap:     [0.60, 0.75]
+  LIQUIDITY:
+    base:    [0.08, 0.18]   # broke today
+    per_day: [0.03, 0.09]   # ORDINAL FACT: recovers better later than sooner
+    cap:     [0.35, 0.55]   # salary cycles bound it
+  ATTENTION:
+    base:    [0.02, 0.06]   # customer was reached and did not act
+    per_day: [0.00, 0.01]   # a retry does not change their mind
+    cap:     [0.05, 0.12]
+  TERMINAL:
+    base:    [0.0, 0.0]
+    per_day: [0.0, 0.0]
+    cap:     [0.0, 0.0]
+
+# P(a recovery link converts) by class. This is the channel a contact buys,
+# and it is why ATTENTION is worth contacting and TERMINAL is not.
+link_conversion:
+  INFRASTRUCTURE: [0.10, 0.20]
+  LIQUIDITY:      [0.12, 0.25]
+  ATTENTION:      [0.25, 0.45]   # reached, never acted -- a link is the fix
+  TERMINAL:       [0.00, 0.06]   # only a re-registration would work, not a link
+
+# --- Mandate survival -------------------------------------------------------
+# THE MOST LOAD-BEARING INVENTED NUMBER IN THIS FILE. See ASSUMPTIONS.md.
+#
+# The ordinal claim -- "repeated failure notifications increase revocation
+# probability" -- needs no number and is obviously true. Producing a *count* of
+# mandates preserved does need one. The range is deliberately wide, it is swept,
+# and no result should be reported at a single point within it.
+#
+# Anchor: ~20M AutoPay mandates revoked monthly against 808M executions
+# (NPCI, July 2025), and Razorpay's ~18% mandate-cancellation figure. Neither
+# pins a per-notification hazard, so this is UNSOURCED extrapolation.
+mandate:
+  # P(customer revokes) per customer-visible failure notification.
+  revocation_per_notification: [0.010, 0.045]
+  # Multiplier applied per notification after the first: notification fatigue.
+  fatigue_multiplier: [1.15, 1.60]
+  # A customer whose failure is LIQUIDITY is being told they are broke, which
+  # is a worse message to receive repeatedly than a technical decline.
+  class_multiplier:
+    INFRASTRUCTURE: [0.6, 0.9]
+    LIQUIDITY:      [1.1, 1.6]
+    ATTENTION:      [0.9, 1.2]
+    TERMINAL:       [0.8, 1.2]
+
+# --- Classifier observability ----------------------------------------------
+# How cleanly the true class shows up in the emitted payload. At 1.0 the
+# taxonomy is perfectly separable and the classifier's cost matrix never
+# matters; below that, keys are ambiguous and misclassification costs bite.
+# Sweeping this is how C8 shows the policy does not depend on a clean signal.
+emission:
+  fidelity: [0.75, 0.95]
+
+# --- LTV sensitivity --------------------------------------------------------
+# NOT used to produce a headline figure. Reported only as a sensitivity across
+# this range: "at 6 months, Rs X; at 12 months, Rs Y". A single number here
+# would be a cardinal claim dressed as a result.
+ltv:
+  remaining_lifetime_months: [6, 18]
