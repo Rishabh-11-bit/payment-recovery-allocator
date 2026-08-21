@@ -109,7 +109,19 @@ failures have timing freedom LIQUIDITY ones don't. Unverified.
 
 ---
 
-## The baseline (Arm A) — rail-parameterised, cause-blind
+## The three arms
+
+The comparison is three-armed. Arm B exists specifically to separate *"contacting people
+helps"* from *"cause-awareness helps"* — without it the uplift claim is ambiguous.
+
+| Arm | What it is | Cause-aware | Budget-aware |
+|---|---|---|---|
+| **A** | Documented baseline — Razorpay's rail-parameterised subscription retry schedule | No | No |
+| **B** | Generic recovery — one recovery link to every failure, no instrument shaping | No | No |
+| **C** | The allocator — cause-aware, budget-aware, mandate-survival-weighted | Yes | Yes |
+
+**Arm A — documented baseline.** Reimplemented from Razorpay's subscriptions documentation,
+**not invented as a strawman**. Cite the docs page in-code at the point of implementation.
 
 | Rail | Behaviour |
 |---|---|
@@ -121,6 +133,14 @@ failures have timing freedom LIQUIDITY ones don't. Unverified.
 card, bank-blocked card, insufficient balance, cancelled mandate — and all four get identical
 treatment. This is the source of the primary claim.
 
+**Arm B — generic recovery.** One recovery link to every failure. No cause awareness, no
+instrument shaping, no budget reasoning. This is the "just contact everyone" arm. Its purpose
+is attribution: A→C uplift conflates the value of contact with the value of cause-awareness,
+and only B→C isolates the second.
+
+**Arm C — the allocator.** Cause-aware, budget-aware, mandate-survival-weighted. The subject
+of the evaluation.
+
 ## Rail migration is a directed graph
 
 | From | → Card | → UPI | → Emandate |
@@ -129,9 +149,21 @@ treatment. This is the source of the primary claim.
 | UPI | Yes | No | No |
 | Emandate | Yes | No | No |
 
-`SWITCH_RAIL` must validate against this. **Manual charging of a domestic card is not
-supported** — card re-attempts are customer-mediated (hosted page / card change), never
+`OFFER_RAIL_MIGRATION` must validate against this. **Manual charging of a domestic card is
+not supported** — card re-attempts are customer-mediated (hosted page / card change), never
 programmatic.
+
+**The system offers; the customer acts.** Mandate-level migration cannot be executed
+programmatically, so the action is an *offer*, not a switch. Do not model it as one.
+This is distinct from link-level shaping (`REORDER_RAILS`, `EXCLUDE_INSTRUMENT`), which the
+system *does* execute directly on a recovery Payment Link via `options.checkout`:
+
+| Level | Actions | Who executes |
+|---|---|---|
+| **Mandate** — move the subscription to another rail | `OFFER_RAIL_MIGRATION` | Customer, via hosted page / card change. Validates against the graph above |
+| **Link** — shape the checkout on a recovery Payment Link | `REORDER_RAILS`, `EXCLUDE_INSTRUMENT` | System, directly, via `options.checkout` |
+
+Conflating the two was the error recorded in `CHALLENGES.md` 004.
 
 *Open, not asserted:* Razorpay does not document why UPI cannot migrate to UPI. Likely because
 the target rail needs re-authorisation and only cards re-authorise synchronously in-session.
@@ -206,9 +238,30 @@ Response slower than 5s is treated as timeout and resent → acknowledge fast, d
 Ingest → Normalize → Classify → Allocate → Guard → Execute → Reconcile → Measure
 ```
 
+### Component map
+
+Component IDs are referenced throughout this file and in `CHALLENGES.md`.
+
+| ID | Component |
+|---|---|
+| C1 | Event core — ingest, dedupe, immutable store, state refresh |
+| C2 | Failure classifier — four classes, method-partitioned key |
+| C3 | Attempt allocator |
+| C4 | Guard — caps, windows, idempotency, storm governor |
+| C5 | Simulator + three arms |
+| C6 | Audit ledger |
+| C7 | Property-based invariant tests |
+| C8 | Robustness sweep across sampled worlds |
+| C9 | External calibration |
+| C10 | Rail actions — reorder and instrument exclusion |
+| C11 | Storm governor — jitter + per-issuer admission ceiling |
+| C12 | Holdout harness |
+
 **Allocate** (not "policy engine"): spends a budget of 4 across a window.
-Actions: `SCHEDULE_AT(t)`, `RECOVERY_LINK`, `REORDER_RAILS`, `EXCLUDE_INSTRUMENT`, `HOLD`,
-`SURRENDER`. No `ATTEMPT_NOW` — see PDN constraint.
+Actions: `SCHEDULE_AT(t)`, `RECOVERY_LINK`, `OFFER_RAIL_MIGRATION`, `REORDER_RAILS`,
+`EXCLUDE_INSTRUMENT`, `HOLD`, `SURRENDER`. No `ATTEMPT_NOW` — see PDN constraint.
+`OFFER_RAIL_MIGRATION` is mandate-level and customer-mediated; `REORDER_RAILS` and
+`EXCLUDE_INSTRUMENT` are link-level and system-executed. See the rail-migration section.
 
 **Guard**: attempt cap, non-peak window check, PDN lead-time check, cooldown, contact budget,
 risk block, order validity, payment-not-already-succeeded, idempotency key
@@ -280,7 +333,7 @@ read a specific probability, stop and flag it.
 **Always:**
 - Config-driven YAML — the full comparison must re-run with changed parameters in seconds
 - Append-only audit events; every decision reconstructable
-- Deterministic and seeded; `make reproduce` regenerates every README number
+- Deterministic and seeded; `python -m recovery.reproduce` regenerates every README number
 - Small, frequent, legibly-messaged commits
 
 ## Do not write these for me
@@ -317,6 +370,6 @@ payloads for fixtures. `order.attempts` increments per failed attempt against an
 
 1. It has a test
 2. Its decisions are visible in the audit trail
-3. `make reproduce` still passes
+3. `python -m recovery.reproduce` still passes
 4. Any new assumption is recorded and classified
 5. It can be explained out loud without reading the code

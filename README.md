@@ -28,14 +28,16 @@ See `PRIOR_ART.md` for the full boundary analysis.
 | `CLAUDE.md` | Architecture, constraints, and hard rules |
 | `PRIOR_ART.md` | What exists at Razorpay and where this layer sits |
 | `CHALLENGES.md` | Running build log |
-| `ASSUMPTIONS.md` | Every parameter, marked ordinal or cardinal, with sources |
-| `NOT_BUILT.md` | Deliberately rejected scope, with reasons |
-| `THREAT_MODEL.md` | What breaks in production that does not break here |
+| `ASSUMPTIONS.md` _(pending)_ | Every parameter, marked ordinal or cardinal, with sources |
+| `NOT_BUILT.md` _(pending)_ | Deliberately rejected scope, with reasons |
+| `THREAT_MODEL.md` _(pending)_ | What breaks in production that does not break here |
+
+_(pending)_ documents are Phase 5 deliverables and are not yet written.
 
 ## Reproducing results
 
 ```
-make reproduce
+python -m recovery.reproduce
 ```
 
 Fixed seed. Regenerates every number in this README from scratch.

@@ -137,7 +137,114 @@ Every parameter is marked ordinal or cardinal in `ASSUMPTIONS.md`.
 
 ---
 
-## 003 — _(next entry)_
+## 003 — The strongest result turned out to need no invented probabilities
+
+**Date:** Phase 0
+**Tags:** `#domain` `#evaluation`
+
+**Problem**
+After deciding the evaluation had to be split into three claims (entry 002), the uplift claim
+still rested on assumed recovery dynamics. Even ordinal assumptions — "liquidity failures
+recover better later than sooner" — are assumptions, and a panel can dispute the ordering.
+I wanted at least one component of the result that could not be argued with.
+
+**Diagnosis**
+Found it in Razorpay's own subscription retry documentation.
+
+The doc lists four failure reasons: expired card, bank-blocked card, insufficient balance,
+and customer-cancelled mandate. It then specifies the retry model — T+1, T+2, T+3, then
+`halted` — and the retry model **does not reference the failure reason anywhere**.
+
+So an expired card is retried three times. A customer-cancelled mandate is retried three
+times. Those attempts have a recovery probability of zero — not low, zero, structurally, by
+definition of the failure. Three consumed attempts from a capped budget, three unnecessary
+requests into the banking network, and three failure emails to a customer who already knows
+their card is dead.
+
+**Options**
+1. Keep the recovered-rupees figure as the headline — rejected, it rests on invented dynamics
+2. Report only safety properties and abandon the uplift claim — rejected, too weak
+3. Restructure the claim into tiers by how much each rests on invented numbers
+
+**Resolution**
+Option 3. The headline result is now **attempts and customer contacts saved on structurally
+unrecoverable failures**, which rests on a definitional fact rather than a simulator
+parameter: P(same-instrument retry succeeds | instrument expired or mandate cancelled) = 0.
+
+Better placement of the surviving attempts is reported as a secondary claim resting on ordinal
+assumptions only. Rupees recovered is not claimed at all — the holdout harness ships instead.
+
+Added `terminal_attempts_wasted` and `terminal_contacts_sent` as first-class metrics.
+
+**Why it mattered**
+The primary claim is now one nobody can dispute without disputing a definition. It exists only
+because the documented baseline is cause-blind, which I would not have known without reading
+the retry model line by line rather than trusting a summary.
+
+---
+
+## 004 — Half the action space I had designed does not exist
+
+**Date:** Phase 0
+**Tags:** `#domain` `#architecture` `#integration`
+
+**Problem**
+The allocator was designed with `SWITCH_RAIL` as a freely available action, and with
+programmatic re-attempt as the default recovery mechanism. Both assumptions were wrong.
+
+**Diagnosis**
+Two constraints from the subscriptions documentation:
+
+**Rail migration is a directed graph, not a free choice.**
+
+| From | → Card | → UPI | → Emandate |
+|---|---|---|---|
+| Card | Yes | Yes | Yes |
+| UPI | Yes | No | No |
+| Emandate | Yes | No | No |
+
+UPI and Emandate can migrate only to Card. Card is the hub.
+
+**Manual charging of a domestic card is not supported.** For domestic cards there is no
+programmatic re-attempt path — recovery is necessarily customer-mediated, via the hosted page
+or a card change.
+
+The retry model is also rail-specific rather than uniform. Card and UPI follow T+1 / T+2 / T+3.
+Emandate is asynchronous: a retry is attempted only once confirmation or rejection of the
+previous payment arrives, which can exceed 24 hours, and charge-day scheduling shifts around
+bank holidays (T → T−1, or T → T−3 if both T and T−1 are holidays).
+
+**Options**
+1. Model rail switching as unconstrained and note the limitation — rejected, it would make the
+   evaluation measure actions that cannot be taken
+2. Encode the migration graph and the customer-mediated constraint into the action space
+
+**Resolution**
+Option 2. `SWITCH_RAIL` now takes a direction and validates against the migration graph.
+Card re-attempts are modelled as customer-mediated rather than programmatic. The simulator
+gained a rail dimension with three distinct baseline behaviours, including the asynchronous
+Emandate model and bank-holiday shifting.
+
+This also reframed rail exclusion. It is not "exclude the rail that failed" — it is "route
+within a directed graph, excluding degraded targets." For a UPI failure the graph offers
+exactly one target, so the real decision is whether to migrate at all or hold the attempt,
+given that Card is frequently a worse conversion path in India than the UPI that just failed.
+
+**Open question, not an assertion:** Razorpay does not document *why* UPI cannot migrate to
+UPI. My inference is that the target rail must be re-authorized, and only cards can be
+re-authorized synchronously in-session — a new UPI mandate needs fresh AFA in the customer's
+app, and e-NACH registration takes days, so switching would cancel working debit authority in
+exchange for authority that may never arrive. This is recorded as a question in the repo, not
+as a claim.
+
+**Why it mattered**
+An allocator that selects actions the platform cannot execute is not a policy, it is a
+simulation of one. Discovering this in Phase 0 rather than during integration saved the
+evaluation from measuring impossible moves.
+
+---
+
+## 005 — _(next entry)_
 
 **Date:**
 **Tags:**
@@ -158,10 +265,15 @@ Every parameter is marked ordinal or cardinal in `ASSUMPTIONS.md`.
 
 Things likely to become entries. Delete once resolved or ruled out.
 
-- [ ] Does the Intelligent Retry Engine cover **one-time** payment failures or only recurring
-      debits? Scope depends on the answer.
+- [ ] **GATE** — Does the Intelligent Retry Engine cover **one-time** payment failures or only
+      recurring debits? Does WhatsApp recovery extend past subscriptions? Scope depends on it.
 - [ ] 1+3 retry cap — verify against NPCI primary source. If unverifiable, phrase as
       "as documented by Razorpay," never as a regulator citation.
+- [ ] Why can UPI not migrate to UPI? Inference recorded in 004; no documentation found.
+      Good question to put to the panel rather than an answer to assert.
+- [ ] Emandate async retry timing — "more than 24 hours" is unbounded in the docs. Needs a
+      modelled distribution, and that distribution is a cardinal assumption requiring a source.
+- [ ] Bank-holiday calendar for T−1 / T−3 shifting — which calendar, and does it vary by bank?
 - [ ] Payments API has no retry endpoint. Recovery is a *new* payment path, not a re-attempt
       of the old one. Confirm how far this constrains the executor.
 - [ ] `payment.failed` is provisional — a payment can later become authorized. Late-success
