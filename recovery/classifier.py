@@ -1,0 +1,357 @@
+"""C2 machinery: lookup-table loader, confidence ladder, cost-based fallback.
+
+**This module contains no taxonomy.** The `(method, source, step, reason)` ->
+class mapping and the cost matrix live in `config/classifier.yaml` and are
+hand-authored. What is here is the machinery that reads them, and it refuses to
+run against a file still marked `status: STUB` unless a caller explicitly opts
+in -- so the stub cannot reach a result by accident.
+
+Three behaviours are worth stating plainly, because they are what the panel
+will push on:
+
+* **Nothing is silently defaulted.** A key that matches no rule gets the
+  configured fallback, `mapped=False`, and a `failure.unmapped` audit event
+  carrying the key that missed. The fallback is never indistinguishable from a
+  real classification.
+* **Confidence is an output.** It comes from the matched rule, is banded by
+  configured thresholds, and the band is what downstream branches on. A
+  MODERATE band permits reordering but not exclusion, because excluding on a
+  misdiagnosis makes recovery harder.
+* **Low confidence resolves toward the cheaper error.** Not toward the more
+  likely class. A LOW band discards the predicted class and asks the cost
+  matrix which class has the lowest worst-case cost of being wrong. That is a
+  minimax choice, and it is deliberate: under low confidence we are not
+  estimating what happened, we are limiting what it costs to be wrong.
+"""
+
+from __future__ import annotations
+
+import pathlib
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping
+
+import yaml
+
+from recovery.models import (
+    Classification,
+    ConfidenceBand,
+    FailureClass,
+    NormalizedFailure,
+)
+
+DEFAULT_CLASSIFIER_PATH = pathlib.Path("config/classifier.yaml")
+KEY_FIELDS = ("method", "source", "step", "reason")
+
+
+class ClassifierConfigError(ValueError):
+    """The mapping file is unusable. Always raised at load, never at classify."""
+
+
+@dataclass(frozen=True)
+class Rule:
+    index: int
+    match: Mapping[str, str]
+    failure_class: FailureClass
+    confidence: float
+    note: str | None = None
+
+    @property
+    def specificity(self) -> int:
+        return len(self.match)
+
+    def matches(self, key: NormalizedFailure) -> bool:
+        """An omitted field is a wildcard. A named field must equal the key's."""
+        for field, expected in self.match.items():
+            if getattr(key, field) != expected:
+                return False
+        return True
+
+    def conflicts_with(self, other: Rule) -> bool:
+        """True if some key would match both at the same specificity.
+
+        Two rules are compatible when every field they both name agrees; a key
+        built from the union of their constraints then matches both. Equal
+        specificity means neither wins, so it would be a coin toss.
+        """
+        if self.specificity != other.specificity:
+            return False
+        for field in set(self.match) & set(other.match):
+            if self.match[field] != other.match[field]:
+                return False
+        return True
+
+    @property
+    def outcome(self) -> tuple[FailureClass, float]:
+        return (self.failure_class, self.confidence)
+
+
+@dataclass(frozen=True)
+class CostMatrix:
+    """cost[true_class][predicted_class]. Ordinal -- only comparisons are read."""
+
+    costs: Mapping[FailureClass, Mapping[FailureClass, float]]
+
+    def cost(self, true_class: FailureClass, predicted: FailureClass) -> float:
+        return self.costs[true_class][predicted]
+
+    def worst_case(self, predicted: FailureClass) -> float:
+        """The most this prediction can cost, over every class it might really be."""
+        return max(self.cost(true, predicted) for true in FailureClass)
+
+    def safest_class(self, candidates: Iterable[FailureClass] | None = None) -> FailureClass:
+        """The class with the lowest worst-case cost of being wrong.
+
+        This is what a LOW confidence band resolves to. Ties break on total cost,
+        then on name, so the result is deterministic rather than dict-ordered.
+        """
+        options = list(candidates) if candidates is not None else list(FailureClass)
+        return min(
+            options,
+            key=lambda option: (
+                self.worst_case(option),
+                sum(self.cost(true, option) for true in FailureClass),
+                option.value,
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ClassifierConfig:
+    status: str
+    version: str
+    source_space: Mapping[str, frozenset[str]]
+    source_aliases: Mapping[str, str]
+    high_threshold: float
+    moderate_threshold: float
+    fallback_class: FailureClass
+    fallback_confidence: float
+    cost_matrix: CostMatrix
+    rules: tuple[Rule, ...]
+
+    @property
+    def is_stub(self) -> bool:
+        return self.status.upper() == "STUB"
+
+
+class Classifier:
+    """Deterministic lookup over the configured table. No model, no LLM."""
+
+    def __init__(self, config: ClassifierConfig) -> None:
+        self.config = config
+        # Most specific first; declaration order breaks equal specificity, and
+        # load-time validation has already ruled out ambiguous ties.
+        self._rules = sorted(
+            config.rules, key=lambda rule: (-rule.specificity, rule.index)
+        )
+
+    def band_for(self, confidence: float) -> ConfidenceBand:
+        if confidence >= self.config.high_threshold:
+            return ConfidenceBand.HIGH
+        if confidence >= self.config.moderate_threshold:
+            return ConfidenceBand.MODERATE
+        return ConfidenceBand.LOW
+
+    def classify(self, key: NormalizedFailure) -> Classification:
+        # An anomalous source means the payload does not match its documented
+        # shape. Rules are not applied to it -- a partial match on a payload we
+        # do not recognise is worse than admitting we do not recognise it.
+        if not key.source_valid_for_method:
+            return self._fallback(key)
+
+        for rule in self._rules:
+            if rule.matches(key):
+                return self._from_rule(rule, key)
+
+        return self._fallback(key)
+
+    def _from_rule(self, rule: Rule, key: NormalizedFailure) -> Classification:
+        band = self.band_for(rule.confidence)
+        if band is ConfidenceBand.LOW:
+            resolved = self.config.cost_matrix.safest_class()
+            return Classification(
+                failure_class=resolved,
+                confidence=rule.confidence,
+                band=band,
+                key=key,
+                mapped=True,
+                rule_index=rule.index,
+                cost_resolved_from=rule.failure_class,
+                note=rule.note,
+            )
+        return Classification(
+            failure_class=rule.failure_class,
+            confidence=rule.confidence,
+            band=band,
+            key=key,
+            mapped=True,
+            rule_index=rule.index,
+            note=rule.note,
+        )
+
+    def _fallback(self, key: NormalizedFailure) -> Classification:
+        """Unmapped. Never silent -- the caller audits on `mapped is False`."""
+        confidence = self.config.fallback_confidence
+        band = self.band_for(confidence)
+        failure_class = self.config.fallback_class
+        cost_resolved_from = None
+        if band is ConfidenceBand.LOW:
+            resolved = self.config.cost_matrix.safest_class()
+            if resolved is not failure_class:
+                cost_resolved_from = failure_class
+                failure_class = resolved
+        return Classification(
+            failure_class=failure_class,
+            confidence=confidence,
+            band=band,
+            key=key,
+            mapped=False,
+            rule_index=None,
+            cost_resolved_from=cost_resolved_from,
+        )
+
+
+# ------------------------------------------------------------------ loading --
+
+
+def _parse_rules(raw: Any) -> tuple[Rule, ...]:
+    if not isinstance(raw, list):
+        raise ClassifierConfigError("`rules` must be a list")
+    rules: list[Rule] = []
+    for index, item in enumerate(raw):
+        match = item.get("match") or {}
+        unknown = set(match) - set(KEY_FIELDS)
+        if unknown:
+            raise ClassifierConfigError(
+                f"rule {index} matches on unknown field(s) {sorted(unknown)}; "
+                f"the key is {KEY_FIELDS}"
+            )
+        if not match:
+            raise ClassifierConfigError(
+                f"rule {index} has an empty match and would catch everything; "
+                "use `fallback` for that"
+            )
+        try:
+            failure_class = FailureClass(item["class"])
+        except (KeyError, ValueError) as exc:
+            raise ClassifierConfigError(f"rule {index}: bad or missing class") from exc
+        confidence = float(item.get("confidence", 0.0))
+        if not 0.0 <= confidence <= 1.0:
+            raise ClassifierConfigError(f"rule {index}: confidence {confidence} outside [0,1]")
+        rules.append(
+            Rule(
+                index=index,
+                match={field: str(value).strip().lower() for field, value in match.items()},
+                failure_class=failure_class,
+                confidence=confidence,
+                note=item.get("note"),
+            )
+        )
+    _reject_ambiguous(rules)
+    return tuple(rules)
+
+
+def _reject_ambiguous(rules: list[Rule]) -> None:
+    """Equal-specificity overlaps are a config error, not a runtime coin toss."""
+    for i, left in enumerate(rules):
+        for right in rules[i + 1 :]:
+            if left.conflicts_with(right) and left.outcome != right.outcome:
+                raise ClassifierConfigError(
+                    f"rules {left.index} and {right.index} both match at specificity "
+                    f"{left.specificity} but disagree: {left.match} -> "
+                    f"{left.failure_class.value} vs {right.match} -> "
+                    f"{right.failure_class.value}. Make one more specific."
+                )
+
+
+def _parse_cost_matrix(raw: Any) -> CostMatrix:
+    if not isinstance(raw, dict):
+        raise ClassifierConfigError("`cost_matrix` must be a mapping")
+    costs: dict[FailureClass, dict[FailureClass, float]] = {}
+    for true_name, row in raw.items():
+        try:
+            true_class = FailureClass(true_name)
+        except ValueError as exc:
+            raise ClassifierConfigError(f"cost_matrix: unknown class {true_name!r}") from exc
+        costs[true_class] = {}
+        for predicted_name, value in row.items():
+            try:
+                predicted = FailureClass(predicted_name)
+            except ValueError as exc:
+                raise ClassifierConfigError(
+                    f"cost_matrix[{true_name}]: unknown class {predicted_name!r}"
+                ) from exc
+            costs[true_class][predicted] = float(value)
+
+    missing = [c.value for c in FailureClass if c not in costs]
+    if missing:
+        raise ClassifierConfigError(f"cost_matrix missing row(s) for {missing}")
+    for true_class, row in costs.items():
+        absent = [c.value for c in FailureClass if c not in row]
+        if absent:
+            raise ClassifierConfigError(
+                f"cost_matrix[{true_class.value}] missing column(s) for {absent}"
+            )
+        if row[true_class] != 0:
+            raise ClassifierConfigError(
+                f"cost_matrix[{true_class.value}][{true_class.value}] must be 0 "
+                "-- a correct classification cannot carry a cost"
+            )
+    return CostMatrix(costs=costs)
+
+
+def load_classifier(
+    path: pathlib.Path | str = DEFAULT_CLASSIFIER_PATH,
+    *,
+    allow_stub: bool = False,
+) -> Classifier:
+    """Load the mapping. Refuses a stub file unless the caller opts in.
+
+    The gate exists so an unfinished taxonomy cannot quietly produce results
+    that look like classifications.
+    """
+    path = pathlib.Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"classifier config not found: {path}")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ClassifierConfigError(f"{path} is not a mapping")
+
+    status = str(raw.get("status", "")).strip()
+    if status.upper() == "STUB" and not allow_stub:
+        raise ClassifierConfigError(
+            f"{path} is marked `status: STUB` -- the taxonomy is not authored yet. "
+            "Pass allow_stub=True to run the machinery against it deliberately."
+        )
+
+    bands = raw.get("confidence_bands") or {}
+    high, moderate = float(bands.get("high", 0.0)), float(bands.get("moderate", 0.0))
+    if not 0.0 <= moderate <= high <= 1.0:
+        raise ClassifierConfigError(
+            f"confidence bands must satisfy 0 <= moderate ({moderate}) <= high ({high}) <= 1"
+        )
+
+    fallback = raw.get("fallback") or {}
+    try:
+        fallback_class = FailureClass(fallback["class"])
+    except (KeyError, ValueError) as exc:
+        raise ClassifierConfigError("`fallback.class` missing or not a known class") from exc
+
+    config = ClassifierConfig(
+        status=status,
+        version=str(raw.get("version", "")),
+        source_space={
+            method: frozenset(str(v).strip().lower() for v in values)
+            for method, values in (raw.get("source_space") or {}).items()
+        },
+        source_aliases={
+            str(k).strip().lower(): str(v).strip().lower()
+            for k, v in (raw.get("source_aliases") or {}).items()
+        },
+        high_threshold=high,
+        moderate_threshold=moderate,
+        fallback_class=fallback_class,
+        fallback_confidence=float(fallback.get("confidence", 0.0)),
+        cost_matrix=_parse_cost_matrix(raw.get("cost_matrix")),
+        rules=_parse_rules(raw.get("rules") or []),
+    )
+    return Classifier(config)

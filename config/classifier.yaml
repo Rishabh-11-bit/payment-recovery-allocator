@@ -1,0 +1,104 @@
+# =============================================================================
+# STUB — NOT AUTHORED. The rows below are illustrative machinery tests, not the
+# taxonomy. The real (method, source, step, reason) -> class mapping and the
+# cost matrix are hand-authored (CLAUDE.md, "Do not write these for me").
+#
+# The classifier reads this file. It does not contain a mapping of its own, and
+# it will not run with `status: STUB` unless explicitly allowed — see
+# `load_classifier(allow_stub=...)`.
+# =============================================================================
+
+status: STUB
+version: "0.0.0-stub"
+
+# --- Value space ------------------------------------------------------------
+# Method-partitioned: the legal `source` values differ per method. Two rules
+# that fall out of the documented field reference and are easy to get wrong:
+#   * there is no `razorpay` source — it is `internal`
+#   * there is no bare `bank` source except for emandate
+# A source outside its method's set is not coerced. It is recorded as invalid,
+# routed to the fallback, and audited.
+
+source_space:
+  card: [customer, business, internal, gateway, issuer_bank]
+  upi: [customer, business, internal, gateway, issuer_bank, customer_psp, network, beneficiary_bank]
+  netbanking: [customer, business, internal, issuer_bank]
+  emandate: [customer, bank, business, internal, gateway, issuer_bank]
+
+# Deliberately empty. An alias silently rewrites an observed value, so each one
+# needs a documented justification. Populate only with cause to.
+#   Example, if it were ever justified:  {razorpay: internal}
+source_aliases: {}
+
+# --- Confidence -------------------------------------------------------------
+# Confidence is an output of classification, not a footnote on it. The bands
+# are what downstream components branch on:
+#   HIGH     -> act on the class, exclusion permitted (C10)
+#   MODERATE -> act on the class, but reorder only, never exclude
+#   LOW      -> do not trust the class; resolve through the cost matrix
+confidence_bands:
+  high: 0.85
+  moderate: 0.60
+
+# --- Fallback ---------------------------------------------------------------
+# Where an unmapped key lands. Never silently applied: every use emits
+# `failure.unmapped` to the audit trail with the key that missed.
+# TODO(author): confirm this is the correct safe default. It should be the class
+# whose worst-case misclassification cost is lowest, per the matrix below.
+fallback:
+  class: INFRASTRUCTURE
+  confidence: 0.0
+
+# --- Cost matrix ------------------------------------------------------------
+# STUB VALUES. cost[true_class][predicted_class]. Diagonal is 0.
+#
+# The documented asymmetry that must survive whatever you put here:
+#   INFRASTRUCTURE mistaken for TERMINAL -> surrenders a recoverable payment
+#   TERMINAL mistaken for INFRASTRUCTURE -> burns capped attempts, risks a flag
+# These are not equal and the matrix must not treat them as such.
+#
+# Ordinal, not cardinal: what matters is the ordering of these costs, not their
+# magnitudes. Nothing reads an absolute value — only comparisons.
+cost_matrix:
+  INFRASTRUCTURE: {INFRASTRUCTURE: 0, LIQUIDITY: 2, ATTENTION: 2, TERMINAL: 8}
+  LIQUIDITY:      {INFRASTRUCTURE: 2, LIQUIDITY: 0, ATTENTION: 2, TERMINAL: 8}
+  ATTENTION:      {INFRASTRUCTURE: 3, LIQUIDITY: 3, ATTENTION: 0, TERMINAL: 5}
+  TERMINAL:       {INFRASTRUCTURE: 6, LIQUIDITY: 6, ATTENTION: 4, TERMINAL: 0}
+
+# --- Rules ------------------------------------------------------------------
+# Matched most-specific-first. An omitted field is a wildcard, so a rule naming
+# only `step` matches any source and reason. Specificity is the count of named
+# fields; two rules matching at equal specificity is an error at load time, not
+# a coin toss at runtime.
+#
+# ILLUSTRATIVE ONLY — six rows to exercise the machinery. The real table is
+# yours, and these should be replaced wholesale rather than extended.
+rules:
+  - match: {method: upi, step: payment_authentication}
+    class: ATTENTION
+    confidence: 0.90
+    note: "Customer reached, never entered M-PIN. Retry has ~zero marginal value."
+
+  - match: {method: upi, step: payment_initiation}
+    class: INFRASTRUCTURE
+    confidence: 0.88
+    note: "Broke before reaching the customer."
+
+  - match: {method: upi, step: payment_creation}
+    class: INFRASTRUCTURE
+    confidence: 0.88
+
+  - match: {method: upi, source: customer_psp, step: payment_debit_response}
+    class: LIQUIDITY
+    confidence: 0.92
+    note: "Customer's bank declined. LIQUIDITY or INFRASTRUCTURE by source."
+
+  - match: {method: card, step: card_enrollment_check}
+    class: TERMINAL
+    confidence: 0.70
+    note: "Card not 3DS-enrolled. TERMINAL-adjacent, hence the lower confidence."
+
+  - match: {method: card, source: issuer_bank, reason: payment_expired_card}
+    class: TERMINAL
+    confidence: 0.99
+    note: "P(retry succeeds) = 0 by definition. This is the primary claim's basis."

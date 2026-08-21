@@ -302,7 +302,64 @@ that never happened. Caught in prose, before any code depended on it.
 
 ---
 
-## 006 — _(next entry)_
+## 006 — The idempotency key was not stable under the replay it existed to survive
+
+**Date:** Phase 1
+**Tags:** `#architecture` `#safety`
+
+**Problem**
+C1's whole point is exactly-once: replay one webhook delivery ten times, get one case
+and one decision. Exactly-once for decisions rests on a uniqueness constraint over
+`recovery:{payment_id}:{policy_version}:{attempt_n}`. I derived `attempt_n` the obvious
+way — count the decisions already recorded for the case, add one.
+
+**Diagnosis**
+That derivation makes the key a function of *when you ask*, not of *what you are deciding
+about*.
+
+Walk a replay through it. First pass: no decisions exist, `attempt_n` = 1, key ends `:1`,
+row inserted. Second pass on the same payment: one decision now exists, so `attempt_n` = 2,
+key ends `:2` — a key that has never been seen, so the constraint does not fire and a
+second decision is written for a single failure. The uniqueness constraint was still
+there, still correct, and completely bypassed, because the thing being made unique was
+being recomputed differently each time.
+
+It did not show up immediately: C1's ingest dedup catches replays at `x-razorpay-event-id`
+before a job is ever enqueued, so the worker never re-ran for the same event. The bug was
+real but masked by the layer in front of it. It surfaced when I wrote a test that ran the
+worker twice over the same event on purpose, rather than trusting that it could not happen.
+
+**Options**
+1. Have the worker check "does a decision already exist for this case" before deciding —
+   rejected. That is read-then-write, which races, and it moves the guarantee out of the
+   database and into application code that has to remember to ask
+2. Derive `attempt_n` from `order.attempts` on the entity — rejected for now: it is a
+   field on the order, refreshed at a different time from the payment, and I did not want
+   the key's stability to depend on the freshness of a second remote object
+3. Assign `attempt_n` once, on first sight of the payment, and store it
+
+**Resolution**
+Option 3. A `chain_attempts` table maps `(chain_key, payment_id) -> attempt_n`, assigned
+on first sight under a primary key and never updated. `assign_attempt_n` is idempotent:
+the tenth call for a payment returns what the first call returned. The idempotency key is
+now a stable function of the payment, so replaying anything — an event, a job, a whole
+worker pass — recomputes the same key and hits the same constraint.
+
+**Why it mattered**
+The failure mode is the one that matters most in this system: a duplicate decision means a
+duplicate recovery action, which means an attempt spent twice against a cap of four, and a
+second failure notification to a customer the mandate-survival argument says we should be
+contacting *less*. It would also have been near-invisible in the metrics — two decisions
+on one failure looks like ordinary volume, not like a bug.
+
+The lesson generalises past this bug. A uniqueness constraint only enforces uniqueness of
+the thing you actually put in it. Deriving part of that thing from mutable state means the
+constraint is guarding a moving target, and it will keep passing while it stops protecting
+anything. Worth checking every remaining key in the system for the same shape.
+
+---
+
+## 007 — _(next entry)_
 
 **Date:**
 **Tags:**

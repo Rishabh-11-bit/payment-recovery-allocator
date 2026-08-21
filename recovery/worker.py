@@ -26,17 +26,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
 
+from recovery.classifier import Classifier
 from recovery.config import Config
 from recovery.gateway import PaymentGateway, StateRefreshError
 from recovery.models import (
     AuditEventType,
     Case,
     CaseState,
+    Classification,
     Decision,
     DecisionAction,
     PaymentSnapshot,
     WebhookEnvelope,
 )
+from recovery.normalize import normalize_snapshot
 from recovery.store import Store
 
 
@@ -45,25 +48,43 @@ def idempotency_key(payment_id: str, policy_version: str, attempt_n: int) -> str
 
 
 class Decider(Protocol):
-    """The allocator's interface (C3). Hand-authored -- not implemented here."""
+    """The allocator's interface (C3). Hand-authored -- not implemented here.
 
-    def decide(self, case: Case, snapshot: PaymentSnapshot, attempt_n: int) -> tuple[
-        DecisionAction, str
-    ]: ...
-
-
-class PendingClassifierDecider:
-    """C1 placeholder. HOLD for everything, with the reason stated plainly.
-
-    This is deliberately not a policy. It exists so the event core can be proved
-    exactly-once before the classifier (C2) and allocator (C3) exist. Replacing
-    it must not require changing anything in this module.
+    Receives the classification rather than the raw failure: the allocator
+    branches on class and on confidence *band*, not on the payload. In
+    particular `classification.may_exclude_instrument` is the HIGH-band gate --
+    exclusion on a misdiagnosis makes recovery harder, so reorder is the default.
     """
 
     def decide(
-        self, case: Case, snapshot: PaymentSnapshot, attempt_n: int
+        self,
+        case: Case,
+        snapshot: PaymentSnapshot,
+        classification: Classification,
+        attempt_n: int,
+    ) -> tuple[DecisionAction, str]: ...
+
+
+class PendingAllocatorDecider:
+    """Placeholder. HOLD for everything, with the reason stated plainly.
+
+    Deliberately not a policy. It exists so the event core and classifier can be
+    proved before the allocator (C3) exists. Replacing it must not require
+    changing anything in this module.
+    """
+
+    def decide(
+        self,
+        case: Case,
+        snapshot: PaymentSnapshot,
+        classification: Classification,
+        attempt_n: int,
     ) -> tuple[DecisionAction, str]:
-        return DecisionAction.HOLD, "pending_classifier: C2/C3 not yet wired"
+        return (
+            DecisionAction.HOLD,
+            f"pending_allocator: classified {classification.failure_class.value} "
+            f"({classification.band.value}), C3 not yet wired",
+        )
 
 
 @dataclass
@@ -74,16 +95,18 @@ class WorkerStats:
     stale_ignored: int = 0
     closed_resolved: int = 0
     refresh_failures: int = 0
+    unmapped_failures: int = 0
 
 
 def process_pending(
     store: Store,
     config: Config,
     gateway: PaymentGateway,
+    classifier: Classifier,
     decider: Decider | None = None,
 ) -> WorkerStats:
     """Drain the pending queue once. Returns what happened, for the reproduce run."""
-    decider = decider or PendingClassifierDecider()
+    decider = decider or PendingAllocatorDecider()
     stats = WorkerStats()
 
     for row in store.claim_jobs(config.worker.batch_size):
@@ -95,15 +118,102 @@ def process_pending(
             body=json.loads(row["body_json"]),
         )
         stats.processed += 1
-        _process_one(store, config, gateway, decider, envelope, row["job_id"], stats)
+        _process_one(
+            store, config, gateway, classifier, decider, envelope, row["job_id"], stats
+        )
 
     return stats
+
+
+def _classify(
+    store: Store,
+    classifier: Classifier,
+    snapshot: PaymentSnapshot,
+    case_id: str,
+    event_id: str,
+    stats: WorkerStats,
+) -> Classification:
+    """Normalize, classify, and make both visible in the trail."""
+    key = normalize_snapshot(
+        snapshot,
+        source_space=classifier.config.source_space,
+        source_aliases=classifier.config.source_aliases,
+    )
+
+    if key.missing or key.aliases_applied:
+        store.append_audit(
+            AuditEventType.FAILURE_NORMALIZED,
+            case_id=case_id,
+            event_id=event_id,
+            detail={
+                "key": key.describe(),
+                "missing": list(key.missing),
+                "aliases_applied": [list(pair) for pair in key.aliases_applied],
+            },
+        )
+
+    if not key.source_valid_for_method:
+        # Not coerced into something that fits. Recorded, then treated as unmapped.
+        store.append_audit(
+            AuditEventType.FAILURE_SOURCE_INVALID,
+            case_id=case_id,
+            event_id=event_id,
+            detail={
+                "method": key.method,
+                "source": key.source,
+                "permitted": sorted(classifier.config.source_space.get(key.method or "", [])),
+            },
+        )
+
+    classification = classifier.classify(key)
+
+    if not classification.mapped:
+        stats.unmapped_failures += 1
+        store.append_audit(
+            AuditEventType.FAILURE_UNMAPPED,
+            case_id=case_id,
+            event_id=event_id,
+            detail={
+                "key": key.describe(),
+                "fell_back_to": classification.failure_class.value,
+            },
+        )
+
+    if classification.cost_resolved_from is not None:
+        store.append_audit(
+            AuditEventType.CLASSIFICATION_COST_RESOLVED,
+            case_id=case_id,
+            event_id=event_id,
+            detail={
+                "predicted": classification.cost_resolved_from.value,
+                "resolved_to": classification.failure_class.value,
+                "confidence": classification.confidence,
+                "basis": "lowest worst-case cost, not highest likelihood",
+            },
+        )
+
+    store.append_audit(
+        AuditEventType.FAILURE_CLASSIFIED,
+        case_id=case_id,
+        event_id=event_id,
+        detail={
+            "key": key.describe(),
+            "class": classification.failure_class.value,
+            "confidence": classification.confidence,
+            "band": classification.band.value,
+            "mapped": classification.mapped,
+            "rule_index": classification.rule_index,
+            "may_exclude_instrument": classification.may_exclude_instrument,
+        },
+    )
+    return classification
 
 
 def _process_one(
     store: Store,
     config: Config,
     gateway: PaymentGateway,
+    classifier: Classifier,
     decider: Decider,
     envelope: WebhookEnvelope,
     job_id: str,
@@ -197,9 +307,12 @@ def _process_one(
         store.finish_job(job_id, "done")
         return
 
-    # 5. Decide, exactly once.
+    # 5. Classify, then decide exactly once.
+    classification = _classify(
+        store, classifier, snapshot, case.case_id, envelope.event_id, stats
+    )
     attempt_n = store.assign_attempt_n(chain_key, payment_id)
-    action, reason = decider.decide(case, snapshot, attempt_n)
+    action, reason = decider.decide(case, snapshot, classification, attempt_n)
     decision = Decision(
         idempotency_key=idempotency_key(payment_id, config.policy.version, attempt_n),
         case_id=case.case_id,

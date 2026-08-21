@@ -4,6 +4,7 @@ import pathlib
 
 import pytest
 
+from recovery.classifier import load_classifier
 from recovery.config import load_config
 from recovery.gateway import SimulatedGateway
 from recovery.store import Store
@@ -25,3 +26,9 @@ def store(tmp_path: pathlib.Path) -> Store:
 @pytest.fixture
 def gateway() -> SimulatedGateway:
     return SimulatedGateway()
+
+
+@pytest.fixture
+def classifier():
+    """The shipped file is still a stub; tests opt in deliberately."""
+    return load_classifier(pathlib.Path("config/classifier.yaml"), allow_stub=True)

@@ -51,6 +51,28 @@ class PaymentStatus(str, enum.Enum):
         return self in (PaymentStatus.AUTHORIZED, PaymentStatus.CAPTURED, PaymentStatus.REFUNDED)
 
 
+class FailureClass(str, enum.Enum):
+    """The four classes. Membership is C2's content and is hand-authored."""
+
+    INFRASTRUCTURE = "INFRASTRUCTURE"
+    LIQUIDITY = "LIQUIDITY"
+    ATTENTION = "ATTENTION"
+    TERMINAL = "TERMINAL"
+
+
+class ConfidenceBand(str, enum.Enum):
+    """What downstream components branch on.
+
+    HIGH permits exclusion (C10); MODERATE permits reordering only, because
+    excluding on a misdiagnosis makes recovery harder; LOW means the class is
+    not trusted and the cost matrix decides instead.
+    """
+
+    HIGH = "HIGH"
+    MODERATE = "MODERATE"
+    LOW = "LOW"
+
+
 class CaseState(str, enum.Enum):
     OPEN = "open"
     DECIDED = "decided"
@@ -86,6 +108,11 @@ class AuditEventType(str, enum.Enum):
     STATE_REFRESH_FAILED = "payment.state_refresh_failed"
     DECISION_RECORDED = "decision.recorded"
     DECISION_DUPLICATE_SUPPRESSED = "decision.duplicate_suppressed"
+    FAILURE_NORMALIZED = "failure.normalized"
+    FAILURE_CLASSIFIED = "failure.classified"
+    FAILURE_UNMAPPED = "failure.unmapped"
+    FAILURE_SOURCE_INVALID = "failure.source_invalid_for_method"
+    CLASSIFICATION_COST_RESOLVED = "failure.cost_resolved"
 
 
 # --------------------------------------------------------------------------- #
@@ -152,6 +179,57 @@ class PaymentSnapshot(_Permissive):
 # --------------------------------------------------------------------------- #
 # Our records
 # --------------------------------------------------------------------------- #
+
+
+class NormalizedFailure(_Model):
+    """The classifier key, extracted from a payment entity.
+
+    All four components are optional because any of them can be absent from a
+    real payload. An absent component is a wildcard at match time, not an error
+    -- but `missing` records which ones were absent so a classification made on
+    a thin key is visible as such rather than looking authoritative.
+    """
+
+    method: str | None
+    source: str | None
+    step: str | None
+    reason: str | None
+    missing: tuple[str, ...] = ()
+    # Source present but outside its method's documented value space.
+    source_valid_for_method: bool = True
+    aliases_applied: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def key(self) -> tuple[str | None, str | None, str | None, str | None]:
+        return (self.method, self.source, self.step, self.reason)
+
+    def describe(self) -> str:
+        return "/".join(part or "-" for part in self.key)
+
+
+class Classification(_Model):
+    """A class, a confidence, and the provenance of both.
+
+    `confidence` is an output of classification rather than a note attached to
+    it: the band drives what C10 is allowed to do, and a LOW band hands the
+    decision to the cost matrix instead of to the predicted class.
+    """
+
+    failure_class: FailureClass
+    confidence: Annotated[float, Field(ge=0.0, le=1.0)]
+    band: ConfidenceBand
+    key: NormalizedFailure
+    # False when no rule matched and the configured fallback was used.
+    mapped: bool
+    rule_index: int | None = None
+    # Set when a LOW band sent the predicted class through the cost matrix.
+    cost_resolved_from: FailureClass | None = None
+    note: str | None = None
+
+    @property
+    def may_exclude_instrument(self) -> bool:
+        """Exclusion is the high-confidence case; reorder is the default."""
+        return self.band is ConfidenceBand.HIGH
 
 
 class Case(_Model):

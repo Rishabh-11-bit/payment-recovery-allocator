@@ -2,7 +2,8 @@
 
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
-**Status:** Phase 1 — C1 event core landed. C2 classifier and C3 allocator not yet built.
+**Status:** Phase 1 — C1 event core and C2 classifier machinery landed. The classifier's
+taxonomy and cost matrix are not yet authored; C3 allocator not yet built.
 
 ---
 
@@ -55,6 +56,18 @@ Nothing goes in this README that this command does not reproduce.
 case and one decision, with the full sequence visible in the audit trail: one
 `webhook.received`, nine `webhook.duplicate_ignored`, one `payment.state_refreshed`,
 one `case.opened`, one `decision.recorded`.
+
+**C2 — classifier machinery.** Deterministic lookup over a table loaded from
+`config/classifier.yaml`. The module contains no taxonomy: the mapping and the cost
+matrix are hand-authored, and the loader refuses a file still marked `status: STUB`
+unless a caller opts in explicitly.
+
+An unmapped key is never silently defaulted — it reports `mapped=False`, zero
+confidence, and emits `failure.unmapped` with the key that missed. Confidence is an
+output: only a HIGH band permits excluding an instrument, because excluding on a
+misdiagnosis makes recovery harder. A LOW band discards the predicted class and asks
+the cost matrix which class has the lowest worst-case cost of being wrong — the
+cheaper error, not the more likely class.
 
 Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
 at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and
