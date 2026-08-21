@@ -18,7 +18,7 @@ import yaml
 from recovery.classifier import (
     Classifier,
     ClassifierConfigError,
-    CostMatrix,
+    CostModel,
     load_classifier,
 )
 from recovery.models import ConfidenceBand, FailureClass, NormalizedFailure
@@ -134,7 +134,7 @@ def test_bands_must_be_ordered(tmp_path):
 def test_cost_matrix_is_validated(tmp_path, mutation, expected):
     data = yaml.safe_load(SHIPPED.read_text(encoding="utf-8"))
     for row, columns in mutation.items():
-        data["cost_matrix"].setdefault(row, {}).update(columns)
+        data["costs"]["misclassification"].setdefault(row, {}).update(columns)
     path = tmp_path / "c.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     with pytest.raises(ClassifierConfigError, match=expected):
@@ -143,7 +143,7 @@ def test_cost_matrix_is_validated(tmp_path, mutation, expected):
 
 def test_incomplete_cost_matrix_is_rejected(tmp_path):
     data = yaml.safe_load(SHIPPED.read_text(encoding="utf-8"))
-    del data["cost_matrix"]["TERMINAL"]
+    del data["costs"]["misclassification"]["TERMINAL"]
     path = tmp_path / "c.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     with pytest.raises(ClassifierConfigError, match="missing row"):
@@ -282,13 +282,13 @@ def test_low_confidence_resolves_toward_the_cheaper_error(tmp_path):
     path = write_config(
         tmp_path,
         rules=[{"match": {"method": "upi"}, "class": "TERMINAL", "confidence": 0.10}],
-        cost_matrix={
+        costs={"contact": {c: 1 for c in ("INFRASTRUCTURE","LIQUIDITY","ATTENTION","TERMINAL")}, "misclassification": {
             # TERMINAL is ruinous to predict wrongly; ATTENTION is cheap.
             "INFRASTRUCTURE": {"INFRASTRUCTURE": 0, "LIQUIDITY": 2, "ATTENTION": 1, "TERMINAL": 90},
             "LIQUIDITY": {"INFRASTRUCTURE": 2, "LIQUIDITY": 0, "ATTENTION": 1, "TERMINAL": 90},
             "ATTENTION": {"INFRASTRUCTURE": 2, "LIQUIDITY": 2, "ATTENTION": 0, "TERMINAL": 90},
             "TERMINAL": {"INFRASTRUCTURE": 3, "LIQUIDITY": 3, "ATTENTION": 2, "TERMINAL": 0},
-        },
+        }},
     )
     classifier = load_classifier(path, allow_stub=True)
     result = classifier.classify(key(method="upi"))
@@ -310,8 +310,9 @@ def test_high_confidence_is_not_second_guessed(tmp_path):
 
 
 def test_safest_class_is_minimax_not_most_likely():
-    matrix = CostMatrix(
-        costs={
+    matrix = CostModel(
+        contact={c: 1.0 for c in FailureClass},
+        misclassification={
             FailureClass.INFRASTRUCTURE: {
                 FailureClass.INFRASTRUCTURE: 0,
                 FailureClass.LIQUIDITY: 1,
@@ -336,7 +337,7 @@ def test_safest_class_is_minimax_not_most_likely():
                 FailureClass.ATTENTION: 2,
                 FailureClass.TERMINAL: 0,
             },
-        }
+        },
     )
     assert matrix.worst_case(FailureClass.TERMINAL) == 50
     assert matrix.safest_class() is not FailureClass.TERMINAL
@@ -347,7 +348,7 @@ def test_safest_class_is_deterministic_under_ties():
         true: {predicted: (0 if true is predicted else 5) for predicted in FailureClass}
         for true in FailureClass
     }
-    matrix = CostMatrix(costs=flat)
+    matrix = CostModel(misclassification=flat, contact={c: 1.0 for c in FailureClass})
     assert len({matrix.safest_class() for _ in range(20)}) == 1
 
 
@@ -364,3 +365,55 @@ def test_no_model_and_no_network(classifier):
     """C2 is a lookup table. Nothing here may call out."""
     assert isinstance(classifier, Classifier)
     assert classifier.config.rules, "rules come from config, not from code"
+
+
+# ------------------------------------------------- cost-model schema ------ #
+
+
+def test_fallback_class_is_rejected_if_configured(tmp_path):
+    """A safe default written separately from the matrix would drift from it."""
+    path = write_config(tmp_path, fallback={"class": "TERMINAL", "confidence": 0.0})
+    with pytest.raises(ClassifierConfigError, match="not configurable"):
+        load_classifier(path, allow_stub=True)
+
+
+def test_unmapped_resolves_through_the_cost_model(tmp_path):
+    """Change the costs and the fallback follows -- no second place to edit."""
+    data = yaml.safe_load(SHIPPED.read_text(encoding="utf-8"))
+    data["costs"]["misclassification"] = {
+        "INFRASTRUCTURE": {"INFRASTRUCTURE": 0, "LIQUIDITY": 9, "ATTENTION": 9, "TERMINAL": 9},
+        "LIQUIDITY": {"INFRASTRUCTURE": 1, "LIQUIDITY": 0, "ATTENTION": 9, "TERMINAL": 9},
+        "ATTENTION": {"INFRASTRUCTURE": 1, "LIQUIDITY": 9, "ATTENTION": 0, "TERMINAL": 9},
+        "TERMINAL": {"INFRASTRUCTURE": 1, "LIQUIDITY": 9, "ATTENTION": 9, "TERMINAL": 0},
+    }
+    path = tmp_path / "c.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    classifier = load_classifier(path, allow_stub=True)
+
+    result = classifier.classify(key(method="upi", step="nothing_maps_this"))
+    assert result.failure_class is FailureClass.INFRASTRUCTURE
+    assert result.mapped is False
+
+
+def test_contact_costs_are_required(tmp_path):
+    """A contact costs something even when the class is right."""
+    data = yaml.safe_load(SHIPPED.read_text(encoding="utf-8"))
+    del data["costs"]["contact"]
+    path = tmp_path / "c.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(ClassifierConfigError, match="costs.contact"):
+        load_classifier(path, allow_stub=True)
+
+
+def test_incomplete_contact_costs_are_rejected(tmp_path):
+    data = yaml.safe_load(SHIPPED.read_text(encoding="utf-8"))
+    del data["costs"]["contact"]["TERMINAL"]
+    path = tmp_path / "c.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(ClassifierConfigError, match="missing entries"):
+        load_classifier(path, allow_stub=True)
+
+
+def test_contact_cost_is_readable_per_class(classifier):
+    costs = classifier.config.costs
+    assert all(costs.contact_cost(c) >= 0 for c in FailureClass)

@@ -86,13 +86,25 @@ class Rule:
 
 
 @dataclass(frozen=True)
-class CostMatrix:
-    """cost[true_class][predicted_class]. Ordinal -- only comparisons are read."""
+class CostModel:
+    """What being wrong costs, and what contacting the customer costs.
 
-    costs: Mapping[FailureClass, Mapping[FailureClass, float]]
+    Two priced things, because a decision costs more than a wrong label. The
+    misclassification matrix prices getting the class wrong; `contact` prices
+    one customer-visible contact against the failure's true class, which is
+    where the mandate-survival argument enters the arithmetic.
+
+    Ordinal -- only comparisons are read, never magnitudes.
+    """
+
+    misclassification: Mapping[FailureClass, Mapping[FailureClass, float]]
+    contact: Mapping[FailureClass, float]
 
     def cost(self, true_class: FailureClass, predicted: FailureClass) -> float:
-        return self.costs[true_class][predicted]
+        return self.misclassification[true_class][predicted]
+
+    def contact_cost(self, true_class: FailureClass) -> float:
+        return self.contact[true_class]
 
     def worst_case(self, predicted: FailureClass) -> float:
         """The most this prediction can cost, over every class it might really be."""
@@ -123,9 +135,8 @@ class ClassifierConfig:
     source_aliases: Mapping[str, str]
     high_threshold: float
     moderate_threshold: float
-    fallback_class: FailureClass
     fallback_confidence: float
-    cost_matrix: CostMatrix
+    costs: CostModel
     rules: tuple[Rule, ...]
 
     @property
@@ -167,7 +178,7 @@ class Classifier:
     def _from_rule(self, rule: Rule, key: NormalizedFailure) -> Classification:
         band = self.band_for(rule.confidence)
         if band is ConfidenceBand.LOW:
-            resolved = self.config.cost_matrix.safest_class()
+            resolved = self.config.costs.safest_class()
             return Classification(
                 failure_class=resolved,
                 confidence=rule.confidence,
@@ -189,24 +200,23 @@ class Classifier:
         )
 
     def _fallback(self, key: NormalizedFailure) -> Classification:
-        """Unmapped. Never silent -- the caller audits on `mapped is False`."""
+        """Unmapped. Resolved through the cost model.
+
+        There is no configured fallback class: a safe default written down
+        separately from the matrix that justifies it is a default that will
+        eventually disagree with it. Deriving it means changing the costs
+        changes the fallback, automatically and visibly.
+
+        Never silent -- the caller audits on `mapped is False`.
+        """
         confidence = self.config.fallback_confidence
-        band = self.band_for(confidence)
-        failure_class = self.config.fallback_class
-        cost_resolved_from = None
-        if band is ConfidenceBand.LOW:
-            resolved = self.config.cost_matrix.safest_class()
-            if resolved is not failure_class:
-                cost_resolved_from = failure_class
-                failure_class = resolved
         return Classification(
-            failure_class=failure_class,
+            failure_class=self.config.costs.safest_class(),
             confidence=confidence,
-            band=band,
+            band=self.band_for(confidence),
             key=key,
             mapped=False,
             rule_index=None,
-            cost_resolved_from=cost_resolved_from,
         )
 
 
@@ -263,40 +273,63 @@ def _reject_ambiguous(rules: list[Rule]) -> None:
                 )
 
 
-def _parse_cost_matrix(raw: Any) -> CostMatrix:
+def _parse_costs(raw: Any) -> CostModel:
     if not isinstance(raw, dict):
-        raise ClassifierConfigError("`cost_matrix` must be a mapping")
+        raise ClassifierConfigError("`costs` must be a mapping")
+    matrix_raw = raw.get("misclassification")
+    if not isinstance(matrix_raw, dict):
+        raise ClassifierConfigError("`costs.misclassification` must be a mapping")
+
     costs: dict[FailureClass, dict[FailureClass, float]] = {}
-    for true_name, row in raw.items():
+    for true_name, row in matrix_raw.items():
         try:
             true_class = FailureClass(true_name)
         except ValueError as exc:
-            raise ClassifierConfigError(f"cost_matrix: unknown class {true_name!r}") from exc
+            raise ClassifierConfigError(
+                f"costs.misclassification: unknown class {true_name!r}"
+            ) from exc
         costs[true_class] = {}
         for predicted_name, value in row.items():
             try:
                 predicted = FailureClass(predicted_name)
             except ValueError as exc:
                 raise ClassifierConfigError(
-                    f"cost_matrix[{true_name}]: unknown class {predicted_name!r}"
+                    f"costs.misclassification[{true_name}]: unknown class {predicted_name!r}"
                 ) from exc
             costs[true_class][predicted] = float(value)
 
     missing = [c.value for c in FailureClass if c not in costs]
     if missing:
-        raise ClassifierConfigError(f"cost_matrix missing row(s) for {missing}")
+        raise ClassifierConfigError(f"costs.misclassification missing row(s) for {missing}")
     for true_class, row in costs.items():
         absent = [c.value for c in FailureClass if c not in row]
         if absent:
             raise ClassifierConfigError(
-                f"cost_matrix[{true_class.value}] missing column(s) for {absent}"
+                f"costs.misclassification[{true_class.value}] missing column(s) for {absent}"
             )
         if row[true_class] != 0:
             raise ClassifierConfigError(
-                f"cost_matrix[{true_class.value}][{true_class.value}] must be 0 "
+                f"costs.misclassification[{true_class.value}][{true_class.value}] must be 0 "
                 "-- a correct classification cannot carry a cost"
             )
-    return CostMatrix(costs=costs)
+
+    contact_raw = raw.get("contact")
+    if not isinstance(contact_raw, dict):
+        raise ClassifierConfigError(
+            "`costs.contact` must be a mapping -- a customer contact carries a cost "
+            "even when the class is right"
+        )
+    contact: dict[FailureClass, float] = {}
+    for name, value in contact_raw.items():
+        try:
+            contact[FailureClass(name)] = float(value)
+        except ValueError as exc:
+            raise ClassifierConfigError(f"costs.contact: unknown class {name!r}") from exc
+    absent_contact = [c.value for c in FailureClass if c not in contact]
+    if absent_contact:
+        raise ClassifierConfigError(f"costs.contact missing entries for {absent_contact}")
+
+    return CostModel(misclassification=costs, contact=contact)
 
 
 def load_classifier(
@@ -331,10 +364,12 @@ def load_classifier(
         )
 
     fallback = raw.get("fallback") or {}
-    try:
-        fallback_class = FailureClass(fallback["class"])
-    except (KeyError, ValueError) as exc:
-        raise ClassifierConfigError("`fallback.class` missing or not a known class") from exc
+    if "class" in fallback:
+        raise ClassifierConfigError(
+            "`fallback.class` is not configurable: an unmapped key resolves through "
+            "`costs.misclassification`, so a separately-written default would be free "
+            "to drift out of agreement with the matrix justifying it. Remove the key."
+        )
 
     config = ClassifierConfig(
         status=status,
@@ -349,9 +384,8 @@ def load_classifier(
         },
         high_threshold=high,
         moderate_threshold=moderate,
-        fallback_class=fallback_class,
         fallback_confidence=float(fallback.get("confidence", 0.0)),
-        cost_matrix=_parse_cost_matrix(raw.get("cost_matrix")),
+        costs=_parse_costs(raw.get("costs")),
         rules=_parse_rules(raw.get("rules") or []),
     )
     return Classifier(config)

@@ -41,29 +41,47 @@ confidence_bands:
   moderate: 0.60
 
 # --- Fallback ---------------------------------------------------------------
-# Where an unmapped key lands. Never silently applied: every use emits
-# `failure.unmapped` to the audit trail with the key that missed.
-# TODO(author): confirm this is the correct safe default. It should be the class
-# whose worst-case misclassification cost is lowest, per the matrix below.
+# There is deliberately **no `fallback.class`**. An unmapped key resolves through
+# the cost model below, so a configured fallback cannot drift out of agreement
+# with the matrix that is supposed to justify it. Change the costs and the
+# fallback follows automatically.
+#
+# Never silently applied: every use emits `failure.unmapped` to the audit trail
+# with the key that missed.
 fallback:
-  class: INFRASTRUCTURE
   confidence: 0.0
 
-# --- Cost matrix ------------------------------------------------------------
-# STUB VALUES. cost[true_class][predicted_class]. Diagonal is 0.
+# --- Cost model -------------------------------------------------------------
+# STUB VALUES throughout. Two priced things, because a decision costs more than
+# a wrong label: getting the class wrong, and contacting the customer at all.
 #
-# The documented asymmetry that must survive whatever you put here:
-#   INFRASTRUCTURE mistaken for TERMINAL -> surrenders a recoverable payment
-#   TERMINAL mistaken for INFRASTRUCTURE -> burns capped attempts, risks a flag
-# These are not equal and the matrix must not treat them as such.
-#
-# Ordinal, not cardinal: what matters is the ordering of these costs, not their
-# magnitudes. Nothing reads an absolute value — only comparisons.
-cost_matrix:
-  INFRASTRUCTURE: {INFRASTRUCTURE: 0, LIQUIDITY: 2, ATTENTION: 2, TERMINAL: 8}
-  LIQUIDITY:      {INFRASTRUCTURE: 2, LIQUIDITY: 0, ATTENTION: 2, TERMINAL: 8}
-  ATTENTION:      {INFRASTRUCTURE: 3, LIQUIDITY: 3, ATTENTION: 0, TERMINAL: 5}
-  TERMINAL:       {INFRASTRUCTURE: 6, LIQUIDITY: 6, ATTENTION: 4, TERMINAL: 0}
+# Ordinal, not cardinal: what matters is the ordering, not the magnitudes.
+# Nothing reads an absolute value — only comparisons.
+costs:
+
+  # cost[true_class][predicted_class]. Diagonal must be 0.
+  #
+  # The documented asymmetry that must survive whatever you put here:
+  #   INFRASTRUCTURE mistaken for TERMINAL -> surrenders a recoverable payment
+  #   TERMINAL mistaken for INFRASTRUCTURE -> burns capped attempts, risks a flag
+  # These are not equal and the matrix must not treat them as such.
+  misclassification:
+    INFRASTRUCTURE: {INFRASTRUCTURE: 0, LIQUIDITY: 2, ATTENTION: 2, TERMINAL: 8}
+    LIQUIDITY:      {INFRASTRUCTURE: 2, LIQUIDITY: 0, ATTENTION: 2, TERMINAL: 8}
+    ATTENTION:      {INFRASTRUCTURE: 3, LIQUIDITY: 3, ATTENTION: 0, TERMINAL: 5}
+    TERMINAL:       {INFRASTRUCTURE: 6, LIQUIDITY: 6, ATTENTION: 4, TERMINAL: 0}
+
+  # Cost of one customer-visible contact, by the failure's true class.
+  # This is where the mandate-survival argument gets priced: contacting someone
+  # whose card is dead spends goodwill against a recovery that cannot happen,
+  # and repeated contact is what gets a mandate cancelled from the UPI app.
+  # TODO(author): TERMINAL contact should dominate. ATTENTION contact is the
+  # one that earns its cost — the customer was reached but never acted.
+  contact:
+    INFRASTRUCTURE: 1
+    LIQUIDITY: 2
+    ATTENTION: 1
+    TERMINAL: 6
 
 # --- Rules ------------------------------------------------------------------
 # Matched most-specific-first. An omitted field is a wildcard, so a rule naming
