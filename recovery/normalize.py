@@ -6,11 +6,17 @@ that is the classifier's job, and the mapping is hand-authored in
 
 Two things it does enforce, because both are cheap here and expensive later:
 
-* **The value space is method-partitioned.** Legal `source` values differ per
-  method. A `source` outside its method's set is not coerced into one that fits;
-  it is flagged, and the classifier routes it to the fallback. Two cases this
-  catches: there is no `razorpay` source (it is `internal`), and there is no
-  bare `bank` source except for emandate.
+* **The value space is method-partitioned, and it is a lower bound.** Legal
+  `source` values differ per method. A `source` outside its method's documented
+  set is not coerced into one that fits, and it is not rejected either -- it is
+  flagged for review and classification proceeds normally.
+
+  The lower-bound framing is not a design preference, it is a correction. A real
+  test-mode netbanking failure returns `source: bank`, which the error-parameters
+  reference lists only for emandate. Treating the documented set as an
+  enumeration made the classifier reject an ordinary production payload. The
+  documentation is a subset of reality; a check derived from it must surface,
+  not reject. See CHALLENGES 007.
 * **Missing components are recorded.** A key with three of four parts still
   classifies -- absent parts are wildcards -- but a classification made on a
   thin key should not look as authoritative as one made on a full key.
@@ -63,15 +69,16 @@ def normalize_entity(
         parts["source"] = source_aliases[original]
         aliases_applied.append((original, parts["source"]))
 
-    source_valid = True
+    source_documented = True
     if source_space is not None and parts["method"] and parts["source"]:
         allowed = source_space.get(parts["method"])
         if allowed is not None:
-            source_valid = parts["source"] in allowed
+            source_documented = parts["source"] in allowed
         else:
-            # Method we have no value space for. Not a source problem; the key
-            # simply will not match a rule and falls through to the fallback.
-            source_valid = True
+            # A method we have no value space for at all -- `wallet` appears in
+            # real captures and is absent from the reference the space was built
+            # from. Nothing to check against, so nothing to surface.
+            source_documented = True
 
     return NormalizedFailure(
         method=parts["method"],
@@ -79,7 +86,7 @@ def normalize_entity(
         step=parts["step"],
         reason=parts["reason"],
         missing=missing,
-        source_valid_for_method=source_valid,
+        source_in_documented_space=source_documented,
         aliases_applied=tuple(aliases_applied),
     )
 

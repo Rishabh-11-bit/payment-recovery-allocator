@@ -21,7 +21,14 @@ from recovery.classifier import (
     CostModel,
     load_classifier,
 )
+from recovery.fixtures import (
+    CAPTURED_CUSTOMER_CANCELLED,
+    CAPTURED_GENERIC_DECLINE,
+    CAPTURED_MERCHANT_CONFIG_TERMINAL,
+    load_captured_payments,
+)
 from recovery.models import ConfidenceBand, FailureClass, NormalizedFailure
+from recovery.normalize import normalize_entity
 
 SHIPPED = pathlib.Path("config/classifier.yaml")
 
@@ -251,7 +258,7 @@ def test_source_outside_its_methods_space_is_not_trusted(classifier):
         method="card",
         source="customer_psp",
         step="payment_debit_response",
-        source_valid_for_method=False,
+        source_in_documented_space=False,
     )
     assert classifier.classify(probe).mapped is False
 
@@ -262,10 +269,18 @@ def test_no_razorpay_source_exists(classifier):
     assert "internal" in space["card"]
 
 
-def test_bare_bank_source_is_emandate_only(classifier):
+def test_bare_bank_source_covers_netbanking_on_captured_evidence(classifier):
+    """This assertion used to exclude netbanking, on the documentation's word.
+
+    A captured test-mode netbanking failure returns `source: bank`. The
+    reference lists a bare `bank` only for emandate, so the documentation is a
+    subset of what the API emits and the test was encoding the doc rather than
+    reality. See CHALLENGES 007.
+    """
     space = classifier.config.source_space
     assert "bank" in space["emandate"]
-    assert all("bank" not in space[method] for method in ("card", "upi", "netbanking"))
+    assert "bank" in space["netbanking"]
+    assert all("bank" not in space[method] for method in ("card", "upi"))
 
 
 def test_upi_extends_the_card_source_space(classifier):
@@ -417,3 +432,115 @@ def test_incomplete_contact_costs_are_rejected(tmp_path):
 def test_contact_cost_is_readable_per_class(classifier):
     costs = classifier.config.costs
     assert all(costs.contact_cost(c) >= 0 for c in FailureClass)
+
+
+# ------------------------------------------- captured payloads (real) ----- #
+
+
+def test_every_captured_payload_classifies(classifier):
+    """No real capture may be rejected. The doc is a subset of reality."""
+    captured = load_captured_payments()
+    if not captured:
+        pytest.skip("no captured payments committed yet")
+
+    for entity in captured:
+        result = classifier.classify(
+            normalize_entity(entity, source_space=classifier.config.source_space)
+        )
+        assert result.failure_class is not None
+        assert 0.0 <= result.confidence <= 1.0
+
+
+def test_undocumented_source_is_surfaced_not_rejected(classifier):
+    """The netbanking `bank` case: flagged for review, classified anyway."""
+    result = classifier.classify(
+        normalize_entity(
+            CAPTURED_GENERIC_DECLINE, source_space=classifier.config.source_space
+        )
+    )
+    assert result.source_undocumented is False, "bank is now documented for netbanking"
+
+    # A source genuinely outside its space still classifies, and still flags.
+    off_space = classifier.classify(
+        normalize_entity(
+            {**CAPTURED_GENERIC_DECLINE, "method": "card"},
+            source_space=classifier.config.source_space,
+        )
+    )
+    assert off_space.source_undocumented is True
+    assert off_space.failure_class is not None, "surfaced, not rejected"
+
+
+def test_undocumented_source_does_not_cost_confidence(tmp_path):
+    """Surfacing is not a penalty: the classification stands on its own."""
+    path = write_config(
+        tmp_path,
+        rules=[{"match": {"step": "payment_authorization"}, "class": "LIQUIDITY",
+                "confidence": 0.90}],
+    )
+    classifier = load_classifier(path, allow_stub=True)
+    documented = classifier.classify(key(method="netbanking", source="customer",
+                                         step="payment_authorization"))
+    undocumented = classifier.classify(
+        key(method="netbanking", source="martian_bank", step="payment_authorization",
+            source_in_documented_space=False)
+    )
+    assert undocumented.confidence == documented.confidence
+    assert undocumented.failure_class is documented.failure_class
+    assert undocumented.source_undocumented is True
+
+
+def test_generic_decline_is_the_canonical_low_confidence_case(classifier):
+    """`payment_failed` from `bank` carries no information. Do not pretend it does."""
+    result = classifier.classify(
+        normalize_entity(
+            CAPTURED_GENERIC_DECLINE, source_space=classifier.config.source_space
+        )
+    )
+    assert result.band is ConfidenceBand.LOW
+    assert result.may_exclude_instrument is False, "must not exclude on no information"
+    assert result.cost_resolved_from is not None, "LOW hands the decision to the cost model"
+
+
+def test_merchant_configuration_terminal_is_expressible(classifier):
+    """TERMINAL for a merchant reason, distinguishable from an instrument one."""
+    result = classifier.classify(
+        normalize_entity(
+            CAPTURED_MERCHANT_CONFIG_TERMINAL, source_space=classifier.config.source_space
+        )
+    )
+    assert result.failure_class is FailureClass.TERMINAL
+    assert result.cause_family == "merchant_configuration"
+
+    expired = classifier.classify(
+        key(method="card", source="issuer_bank", reason="payment_expired_card")
+    )
+    assert expired.failure_class is FailureClass.TERMINAL
+    assert expired.cause_family == "instrument"
+    # Same class, same zero retry probability, different remedy.
+    assert expired.cause_family != result.cause_family
+
+
+def test_cause_family_is_optional(classifier):
+    result = classifier.classify(key(method="upi", step="payment_initiation"))
+    assert result.cause_family is None
+
+
+def test_empty_cause_family_is_rejected(tmp_path):
+    path = write_config(
+        tmp_path,
+        rules=[{"match": {"method": "upi"}, "class": "LIQUIDITY", "confidence": 0.9,
+                "cause_family": "   "}],
+    )
+    with pytest.raises(ClassifierConfigError, match="cause_family"):
+        load_classifier(path, allow_stub=True)
+
+
+def test_wallet_method_has_no_value_space_and_is_not_flagged(classifier):
+    """A method the table does not cover at all must not be treated as anomalous."""
+    result = classifier.classify(
+        normalize_entity(
+            CAPTURED_CUSTOMER_CANCELLED, source_space=classifier.config.source_space
+        )
+    )
+    assert result.source_undocumented is False

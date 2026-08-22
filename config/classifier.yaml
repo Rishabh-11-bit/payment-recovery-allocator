@@ -12,17 +12,26 @@ status: STUB
 version: "0.0.0-stub"
 
 # --- Value space ------------------------------------------------------------
-# Method-partitioned: the legal `source` values differ per method. Two rules
-# that fall out of the documented field reference and are easy to get wrong:
-#   * there is no `razorpay` source — it is `internal`
-#   * there is no bare `bank` source except for emandate
-# A source outside its method's set is not coerced. It is recorded as invalid,
-# routed to the fallback, and audited.
+# Method-partitioned: the legal `source` values differ per method.
+#
+# **This is a LOWER BOUND, not an enumeration.** It is assembled from the
+# error-parameters reference, and that reference is a subset of what the API
+# actually returns. A captured test-mode netbanking failure came back with
+# `source: bank`, which the reference lists only for emandate — so `bank` is
+# now in the netbanking set, from evidence rather than from the doc.
+#
+# A source outside its method's set is **surfaced, not rejected**: it is
+# recorded on the classification and audited for review, and classification
+# proceeds normally. Rejecting on it discarded valid production payloads.
+# See CHALLENGES 007.
+#
+# Still true and worth keeping: there is no `razorpay` source — it is `internal`.
 
 source_space:
   card: [customer, business, internal, gateway, issuer_bank]
   upi: [customer, business, internal, gateway, issuer_bank, customer_psp, network, beneficiary_bank]
-  netbanking: [customer, business, internal, issuer_bank]
+  # `bank` is here on the evidence of a real capture, not on the documentation.
+  netbanking: [customer, business, internal, issuer_bank, bank]
   emandate: [customer, bank, business, internal, gateway, issuer_bank]
 
 # Deliberately empty. An alias silently rewrites an observed value, so each one
@@ -89,8 +98,16 @@ costs:
 # fields; two rules matching at equal specificity is an error at load time, not
 # a coin toss at runtime.
 #
-# ILLUSTRATIVE ONLY — six rows to exercise the machinery. The real table is
-# yours, and these should be replaced wholesale rather than extended.
+# `cause_family` is optional and free-form. Two failures can share a class and
+# still need different actions: an expired card is TERMINAL for an *instrument*
+# reason and a card-change offer may recover it, while
+# `international_transaction_not_allowed` is TERMINAL for a *merchant
+# configuration* reason and nothing the customer does will help. Same zero retry
+# probability, different remedy — and the allocator needs to tell them apart.
+# The families themselves are yours to name.
+#
+# ILLUSTRATIVE ONLY — rows to exercise the machinery. The real table is yours,
+# and these should be replaced wholesale rather than extended.
 rules:
   - match: {method: upi, step: payment_authentication}
     class: ATTENTION
@@ -119,4 +136,25 @@ rules:
   - match: {method: card, source: issuer_bank, reason: payment_expired_card}
     class: TERMINAL
     confidence: 0.99
+    cause_family: instrument
     note: "P(retry succeeds) = 0 by definition. This is the primary claim's basis."
+
+  # From a real capture. Terminal for a merchant-configuration reason: the card
+  # is perfectly valid and will never work with this business. A recovery link
+  # is pointless, a card change is pointless; only the merchant can fix it.
+  - match: {method: card, source: business, reason: international_transaction_not_allowed}
+    class: TERMINAL
+    confidence: 0.97
+    cause_family: merchant_configuration
+    note: "Business accepts domestic cards only. Customer cannot act on this."
+
+  # From a real capture, and the canonical low-confidence case. `payment_failed`
+  # from `bank` carries no information — Razorpay's own error_description says
+  # only 'try another payment method or contact your bank'. This will be common,
+  # and the honest response is a LOW band that hands the decision to the cost
+  # model rather than a guess dressed up as a classification.
+  - match: {method: netbanking, source: bank, step: payment_authorization, reason: payment_failed}
+    class: LIQUIDITY
+    confidence: 0.30
+    cause_family: generic_decline
+    note: "Generic decline. No information in the payload; do not pretend otherwise."

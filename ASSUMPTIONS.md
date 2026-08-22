@@ -27,6 +27,65 @@ uncertainty. A narrow unsourced range is a fabrication with a decimal point.
 
 ---
 
+## Classifier value space — verified vs documentation-derived
+
+**Classification:** STRUCTURAL — not a magnitude, but an assumption about what the
+API emits, and it has already been wrong once
+**Location:** `config/classifier.yaml`, `source_space:` block
+
+The `(method, source, step, reason)` value space is **a lower bound, not an
+enumeration** — see CHALLENGES 007. What follows records how much of it rests on
+evidence and how much on documentation.
+
+### Verified against real test-mode captures
+
+Five payloads in `tests/fixtures/payments/`, captured from test mode:
+
+| method | source | step | reason |
+|---|---|---|---|
+| `netbanking` | `bank` | `payment_authorization` | `payment_failed` |
+| `card` | `business` | `payment_initiation` | `international_transaction_not_allowed` |
+| `wallet` | `customer` | `payment_authentication` | `payment_cancelled` |
+
+`netbanking`/`bank` contradicted the reference outright and is in the value space
+on this evidence alone. `wallet` is a method the value space does not cover at
+all; it is not flagged as anomalous because there is nothing to check against.
+
+### UNVERIFIED — documentation-derived only
+
+**Test mode did not expose UPI.** No UPI mandate failure was captured, so every
+UPI entry in the value space and every UPI rule in the taxonomy rests on the
+error-parameters reference alone:
+
+- `customer_psp` — unverified
+- `network` — unverified
+- `beneficiary_bank` — unverified
+- the UPI `step` values (`payment_debit_response`, `payment_authentication`,
+  `payment_initiation`, `payment_creation`, ~14 in total) — unverified
+
+This matters more than the netbanking correction did. **UPI Autopay is the
+project's primary rail** — the failure-rate figures that motivate the whole
+build are UPI figures (~8–15% vs ~2–3% for card mandates), and the simulator's
+rail mix is UPI-weighted. The rail the argument rests on is the one with no
+captured evidence behind its classifier keys.
+
+Given CHALLENGES 007, the prior should be that the UPI documentation is also a
+subset of reality, and that at least one UPI source or step will turn out to be
+absent from it. The lower-bound handling means such a payload is surfaced rather
+than rejected, so the failure mode is now visibility rather than data loss — but
+the taxonomy rows themselves would still be wrong.
+
+**Open, and worth stating to the panel rather than hiding:** the UPI mappings are
+the least evidenced part of the classifier and the most load-bearing. Capturing a
+real UPI Autopay failure is the single highest-value fixture still missing.
+
+### Emandate
+
+Also unverified. No emandate capture. The bare `bank` source is documented for
+emandate and was not contradicted, but neither was it confirmed.
+
+---
+
 ## `mandate.revocation_per_notification`
 
 **Classification:** CARDINAL — unsourced extrapolation

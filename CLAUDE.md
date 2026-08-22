@@ -182,7 +182,17 @@ Key is **`(method, source, step, reason)`** — the value space is method-partit
 | Netbanking | `customer`, `business`, `internal`, `issuer_bank` |
 | Emandate | `customer`, `bank`, `business`, `internal`, `gateway`, `issuer_bank` |
 
-There is **no `razorpay` source** (it is `internal`) and no bare `bank` except for Emandate.
+There is **no `razorpay` source** (it is `internal`).
+
+**This table is a lower bound, not an enumeration.** It is assembled from the error-parameters
+reference, and that reference is a subset of what the API returns. A captured test-mode
+netbanking failure came back with `source: bank` — documented only for Emandate. `bank` is
+therefore in the netbanking set on evidence, not on the doc, and `wallet` appears as a method
+the table does not cover at all.
+
+A source outside its method's set is **surfaced for review, never grounds for rejection**. A
+strictness check derived from documentation will reject valid production data wherever the
+documentation is incomplete. See `CHALLENGES.md` 007.
 
 `step` localises better than `source`. UPI exposes ~14 steps. Notably:
 

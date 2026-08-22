@@ -359,7 +359,79 @@ anything. Worth checking every remaining key in the system for the same shape.
 
 ---
 
-## 007 — _(next entry)_
+## 007 — A validation rule built from the documentation rejected real production data
+
+**Date:** Phase 1
+**Tags:** `#data` `#integration` `#domain`
+
+**Problem**
+The classifier key is `(method, source, step, reason)`, and the legal `source` values differ
+per method. I built that value space from Razorpay's error-parameters reference and validated
+against it: a source outside its method's documented set was treated as anomalous, refused a
+rule match, and dropped to the unmapped fallback. It felt like rigour. Every payload I had was
+one I had written myself, and they all passed.
+
+Then I captured five real test-mode failures. One was a netbanking decline with
+`error_source: bank`. The reference lists netbanking sources as `customer`, `business`,
+`internal`, `issuer_bank` — no bare `bank`, which it documents only for emandate. My own
+context file had written the rule down as a fact: "no bare `bank` except for Emandate."
+
+So the classifier rejected an entirely ordinary netbanking failure. Not a malformed payload,
+not an edge case — the single most common way a netbanking payment fails.
+
+**Diagnosis**
+The check was sound; the premise was not. I had treated the documentation as an *enumeration*
+of what the API returns, when it is a *lower bound* on it. Reference docs are written to
+describe the common cases, they lag the implementation, and nobody updates them when a new
+source value starts appearing.
+
+The failure mode generalises: **any strictness check derived from documentation will reject
+valid production data wherever the documentation is incomplete.** And the incompleteness is
+invisible from inside — the check passes everything you built from the same doc, so it looks
+correct right up until it meets real traffic.
+
+What made it worse is where the rejection landed. An unmapped key gets the cost-model fallback
+and a LOW confidence band, which is the *correct* handling for a key we genuinely cannot read.
+The netbanking generic decline would have gone there anyway on its merits. But it would have
+arrived there for the wrong reason — flagged as an anomalous payload rather than as an
+uninformative one — and a payload type that resolved cleanly would have been rejected the same
+way. The bug was hidden behind a fallback that made its output look reasonable.
+
+**Options**
+1. Add `bank` to the netbanking set and move on — rejected. It fixes this instance and leaves
+   the mechanism intact, so the next undocumented value fails the same way
+2. Drop the value-space check entirely — rejected. The check has real value: `razorpay` is
+   genuinely not a source, and a UPI-only source appearing on a card is worth seeing
+3. Keep the check, change what it does. Surface the anomaly; never reject on it
+
+**Resolution**
+Option 3. The value space is now documented in code as a lower bound rather than an
+enumeration. A source outside its method's set is recorded on the classification
+(`source_undocumented`), audited as `failure.source_undocumented` with an explicit
+`action: surfaced_for_review`, and classification proceeds normally with confidence untouched.
+`bank` joined the netbanking set on the evidence of the capture, not on the documentation.
+
+The test that asserted "bare `bank` is emandate-only" now asserts the opposite and carries a
+comment saying it previously encoded the documentation rather than reality. `CLAUDE.md` was
+corrected the same way.
+
+**Why it mattered**
+The rejected payload was not exotic. `payment_failed` from `bank` at `payment_authorization`
+is the generic netbanking decline — Razorpay's own `error_description` for it says only "try
+another payment method or contact your bank." It will be one of the highest-volume keys in any
+real batch. A classifier that discards its most common input is not conservative, it is
+broken, and it would have looked fine in every test I had.
+
+The wider lesson is about where strictness belongs. Validation that *rejects* is right at a
+trust boundary, where bad input causes harm. Validation that *describes* is right everywhere
+else. I had put a trust-boundary check in a place where the only thing crossing the boundary
+was my own incomplete understanding — and the cost of being wrong fell on valid data rather
+than on the assumption. Five real payloads found it. I had written dozens of synthetic ones
+and every single one agreed with me.
+
+---
+
+## 008 — _(next entry)_
 
 **Date:**
 **Tags:**

@@ -77,7 +77,7 @@ def test_describe_is_readable_for_the_audit_trail():
 
 def test_source_valid_for_its_own_method():
     key = normalize_entity(entity(), source_space=SPACE)
-    assert key.source_valid_for_method is True
+    assert key.source_in_documented_space is True
 
 
 def test_source_from_another_method_is_flagged():
@@ -85,17 +85,18 @@ def test_source_from_another_method_is_flagged():
     key = normalize_entity(
         entity(method="card", error_source="customer_psp"), source_space=SPACE
     )
-    assert key.source_valid_for_method is False
+    assert key.source_in_documented_space is False
 
 
-def test_bare_bank_is_valid_only_for_emandate():
+def test_bare_bank_is_documented_for_emandate_and_netbanking():
+    """Netbanking `bank` is here on the evidence of a real capture."""
     assert normalize_entity(
         entity(method="emandate", error_source="bank"), source_space=SPACE
-    ).source_valid_for_method
+    ).source_in_documented_space
 
     assert not normalize_entity(
         entity(method="card", error_source="bank"), source_space=SPACE
-    ).source_valid_for_method
+    ).source_in_documented_space
 
 
 def test_razorpay_is_not_a_source_anywhere():
@@ -103,17 +104,17 @@ def test_razorpay_is_not_a_source_anywhere():
         key = normalize_entity(
             entity(method=method, error_source="razorpay"), source_space=SPACE
         )
-        assert key.source_valid_for_method is False
+        assert key.source_in_documented_space is False
 
 
 def test_unknown_method_does_not_fail_validation():
     """No value space for it, so the key simply will not match and falls back."""
     key = normalize_entity(entity(method="wallet"), source_space=SPACE)
-    assert key.source_valid_for_method is True
+    assert key.source_in_documented_space is True
 
 
 def test_validation_is_skipped_when_no_space_is_supplied():
-    assert normalize_entity(entity(error_source="anything")).source_valid_for_method
+    assert normalize_entity(entity(error_source="anything")).source_in_documented_space
 
 
 # ------------------------------------------------------------- aliases ---- #
@@ -133,7 +134,7 @@ def test_alias_application_is_recorded():
     )
     assert key.source == "internal"
     assert key.aliases_applied == (("razorpay", "internal"),)
-    assert key.source_valid_for_method is True, "validated after aliasing"
+    assert key.source_in_documented_space is True, "validated after aliasing"
 
 
 # ------------------------------------------------------------ snapshot ---- #
@@ -152,4 +153,4 @@ def test_normalizes_from_authoritative_state():
     key = normalize_snapshot(snapshot, source_space=SPACE)
 
     assert key.key == ("card", "issuer_bank", "payment_authorization", "payment_expired_card")
-    assert key.source_valid_for_method is True
+    assert key.source_in_documented_space is True

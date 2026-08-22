@@ -111,7 +111,7 @@ class AuditEventType(str, enum.Enum):
     FAILURE_NORMALIZED = "failure.normalized"
     FAILURE_CLASSIFIED = "failure.classified"
     FAILURE_UNMAPPED = "failure.unmapped"
-    FAILURE_SOURCE_INVALID = "failure.source_invalid_for_method"
+    FAILURE_SOURCE_UNDOCUMENTED = "failure.source_undocumented"
     CLASSIFICATION_COST_RESOLVED = "failure.cost_resolved"
 
 
@@ -195,8 +195,14 @@ class NormalizedFailure(_Model):
     step: str | None
     reason: str | None
     missing: tuple[str, ...] = ()
-    # Source present but outside its method's documented value space.
-    source_valid_for_method: bool = True
+    # False when the source is outside its method's *documented* value space.
+    #
+    # The documented space is a **lower bound, not an enumeration**: real
+    # payloads carry sources the error-parameters reference does not list
+    # (netbanking returns a bare `bank`, which is documented only for emandate).
+    # So this flag surfaces a payload worth reviewing; it is never grounds for
+    # rejecting one. See CHALLENGES 007.
+    source_in_documented_space: bool = True
     aliases_applied: tuple[tuple[str, str], ...] = ()
 
     @property
@@ -225,6 +231,15 @@ class Classification(_Model):
     # Set when a LOW band sent the predicted class through the cost matrix.
     cost_resolved_from: FailureClass | None = None
     note: str | None = None
+    # The source was outside its method's documented value space. Surfaced for
+    # review -- the classification still stands, and confidence is untouched.
+    source_undocumented: bool = False
+    # Optional sub-classification, authored alongside the taxonomy. Two failures
+    # can share a class and need different actions: an expired card is TERMINAL
+    # for an instrument reason and a card-change offer may recover it, while
+    # `international_transaction_not_allowed` is TERMINAL for a merchant
+    # configuration reason and nothing the customer does will help.
+    cause_family: str | None = None
 
     @property
     def may_exclude_instrument(self) -> bool:

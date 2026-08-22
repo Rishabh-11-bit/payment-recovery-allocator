@@ -54,6 +54,9 @@ class Rule:
     failure_class: FailureClass
     confidence: float
     note: str | None = None
+    # Optional sub-classification. Two failures can share a class and still need
+    # different actions -- see Classification.cause_family.
+    cause_family: str | None = None
 
     @property
     def specificity(self) -> int:
@@ -163,43 +166,48 @@ class Classifier:
         return ConfidenceBand.LOW
 
     def classify(self, key: NormalizedFailure) -> Classification:
-        # An anomalous source means the payload does not match its documented
-        # shape. Rules are not applied to it -- a partial match on a payload we
-        # do not recognise is worse than admitting we do not recognise it.
-        if not key.source_valid_for_method:
-            return self._fallback(key)
+        """Match the table. An undocumented source is surfaced, never rejected.
+
+        This module previously routed a source outside its method's documented
+        set straight to the fallback. That was wrong: the documented value space
+        is a lower bound, and the rejection discarded ordinary production
+        payloads -- a real netbanking failure returns `source: bank`, which the
+        reference lists only for emandate. The flag now rides along on the
+        result for review, and classification proceeds normally. CHALLENGES 007.
+        """
+        undocumented = not key.source_in_documented_space
 
         for rule in self._rules:
             if rule.matches(key):
-                return self._from_rule(rule, key)
+                return self._from_rule(rule, key, undocumented=undocumented)
 
-        return self._fallback(key)
+        return self._fallback(key, undocumented=undocumented)
 
-    def _from_rule(self, rule: Rule, key: NormalizedFailure) -> Classification:
+    def _from_rule(
+        self, rule: Rule, key: NormalizedFailure, *, undocumented: bool = False
+    ) -> Classification:
         band = self.band_for(rule.confidence)
+        common = {
+            "confidence": rule.confidence,
+            "band": band,
+            "key": key,
+            "mapped": True,
+            "rule_index": rule.index,
+            "note": rule.note,
+            "source_undocumented": undocumented,
+            "cause_family": rule.cause_family,
+        }
         if band is ConfidenceBand.LOW:
-            resolved = self.config.costs.safest_class()
             return Classification(
-                failure_class=resolved,
-                confidence=rule.confidence,
-                band=band,
-                key=key,
-                mapped=True,
-                rule_index=rule.index,
+                failure_class=self.config.costs.safest_class(),
                 cost_resolved_from=rule.failure_class,
-                note=rule.note,
+                **common,
             )
-        return Classification(
-            failure_class=rule.failure_class,
-            confidence=rule.confidence,
-            band=band,
-            key=key,
-            mapped=True,
-            rule_index=rule.index,
-            note=rule.note,
-        )
+        return Classification(failure_class=rule.failure_class, **common)
 
-    def _fallback(self, key: NormalizedFailure) -> Classification:
+    def _fallback(
+        self, key: NormalizedFailure, *, undocumented: bool = False
+    ) -> Classification:
         """Unmapped. Resolved through the cost model.
 
         There is no configured fallback class: a safe default written down
@@ -217,6 +225,7 @@ class Classifier:
             key=key,
             mapped=False,
             rule_index=None,
+            source_undocumented=undocumented,
         )
 
 
@@ -247,6 +256,13 @@ def _parse_rules(raw: Any) -> tuple[Rule, ...]:
         confidence = float(item.get("confidence", 0.0))
         if not 0.0 <= confidence <= 1.0:
             raise ClassifierConfigError(f"rule {index}: confidence {confidence} outside [0,1]")
+        cause_family = item.get("cause_family")
+        if cause_family is not None:
+            cause_family = str(cause_family).strip().lower()
+            if not cause_family:
+                raise ClassifierConfigError(
+                    f"rule {index}: cause_family is present but empty"
+                )
         rules.append(
             Rule(
                 index=index,
@@ -254,6 +270,7 @@ def _parse_rules(raw: Any) -> tuple[Rule, ...]:
                 failure_class=failure_class,
                 confidence=confidence,
                 note=item.get("note"),
+                cause_family=cause_family,
             )
         )
     _reject_ambiguous(rules)

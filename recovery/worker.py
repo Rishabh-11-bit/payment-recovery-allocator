@@ -152,16 +152,20 @@ def _classify(
             },
         )
 
-    if not key.source_valid_for_method:
-        # Not coerced into something that fits. Recorded, then treated as unmapped.
+    if not key.source_in_documented_space:
+        # Surfaced for review, not rejected. The documented value space is a
+        # lower bound -- see CHALLENGES 007. Classification proceeds normally
+        # and this event exists so the gap between doc and reality stays visible
+        # rather than silently absorbed.
         store.append_audit(
-            AuditEventType.FAILURE_SOURCE_INVALID,
+            AuditEventType.FAILURE_SOURCE_UNDOCUMENTED,
             case_id=case_id,
             event_id=event_id,
             detail={
                 "method": key.method,
                 "source": key.source,
-                "permitted": sorted(classifier.config.source_space.get(key.method or "", [])),
+                "documented": sorted(classifier.config.source_space.get(key.method or "", [])),
+                "action": "surfaced_for_review",
             },
         )
 
@@ -204,6 +208,8 @@ def _classify(
             "mapped": classification.mapped,
             "rule_index": classification.rule_index,
             "may_exclude_instrument": classification.may_exclude_instrument,
+            "cause_family": classification.cause_family,
+            "source_undocumented": classification.source_undocumented,
         },
     )
     return classification
