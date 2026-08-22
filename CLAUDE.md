@@ -103,6 +103,32 @@ sources, primary circular not publicly indexed — cite as such).
 **Consequence: `ATTEMPT_NOW` does not exist for mandate debits.** Every attempt is decided
 ≥24h ahead and must land in a non-peak window. Do not propose sub-daily retry timing.
 
+### Two counters, not one — read before building C4
+
+**The cap of 4 is a mandate-execution cap, not a payment-attempt cap.** These count different
+populations and only one of them is scarce:
+
+| Counter | What increments it | Consumes the NPCI budget |
+|---|---|---|
+| **Mandate executions** | System-initiated debits against the mandate, by sequence number | **Yes** — 1 initial + 3 retries, ever |
+| **Payment attempts** | Any attempt against the order, *including a customer tapping a recovery link* | No |
+
+`order.attempts` counts the second. NPCI caps the first.
+
+This is observable in the captured fixtures: all five real payments share one `order_id`. That
+is not a capture artefact — a Payment Link resolves every attempt to the same order, so a
+customer retrying a recovery link three times produces exactly that shape in production.
+
+**Current code conflates them** — `chain_attempts` in the store, and `attempts_used` in the
+simulator, both treat any payment in the chain as budget spend. Unresolved on purpose: the fix
+touches C3's budget reasoning and C4's cap check, both hand-authored. See `CHALLENGES.md` 008.
+
+The error is asymmetric. Over-counting surrenders mandates that still have executions left —
+safe, invisible, and a direct loss of recoverable money. Under-counting breaches the cap, with
+UPI API access restrictions behind it. Do not resolve this by picking the safe direction:
+**the system already knows which attempts it initiated**, so the distinction can be recorded
+rather than inferred.
+
 *Open:* `auto_represent_on_failure` on the PDN reportedly allows automatic re-presentation of
 technically-declined presentations — possibly without a fresh PDN. If true, INFRASTRUCTURE
 failures have timing freedom LIQUIDITY ones don't. Unverified.

@@ -422,16 +422,95 @@ another payment method or contact your bank." It will be one of the highest-volu
 real batch. A classifier that discards its most common input is not conservative, it is
 broken, and it would have looked fine in every test I had.
 
-The wider lesson is about where strictness belongs. Validation that *rejects* is right at a
-trust boundary, where bad input causes harm. Validation that *describes* is right everywhere
-else. I had put a trust-boundary check in a place where the only thing crossing the boundary
-was my own incomplete understanding — and the cost of being wrong fell on valid data rather
-than on the assumption. Five real payloads found it. I had written dozens of synthetic ones
-and every single one agreed with me.
+The wider lesson is about where strictness belongs: **validation that rejects belongs at a
+trust boundary; validation that describes belongs everywhere else.** I had put a
+trust-boundary check in a place where the only thing crossing the boundary was my own
+incomplete understanding — so the cost of being wrong fell on valid data rather than on the
+assumption. Five real payloads found it. I had written dozens of synthetic ones and every
+single one agreed with me.
 
 ---
 
-## 008 — _(next entry)_
+## 008 — The attempt cap counts one thing; I had been counting another
+
+**Date:** Phase 1
+**Tags:** `#domain` `#compliance` `#architecture`
+
+**Status:** OPEN — recorded before C4 rather than resolved. See Resolution.
+
+**Problem**
+All five captured test-mode failures came back against a single `order_id`. My first reading
+was that this was an artefact of me retrying the same order in the dashboard while capturing
+fixtures.
+
+It is not an artefact. It is what a Payment Link does: every attempt against the link resolves
+to the same order, and `order.attempts` increments per attempt. A customer who opens a recovery
+link and tries three times produces exactly that shape in production.
+
+Which matters, because a case in my model is keyed on `order_id` and I assign each payment in
+the chain a position — so that customer's three link attempts arrive as attempts 2, 3 and 4
+against a cap of 4, and the fourth system-initiated retry has nowhere to go.
+
+**Diagnosis**
+**The cap of 4 is a mandate-execution cap, not a payment-attempt cap.** They are different
+counters over different populations:
+
+| Counter | What increments it | Consumes the NPCI budget |
+|---|---|---|
+| Mandate executions | System-initiated debits against the mandate, by sequence number | **Yes** — 1 initial + 3 retries, ever |
+| Payment attempts | Any attempt against the order, including a customer tapping a recovery link | No |
+
+`order.attempts` counts the second. NPCI caps the first. I had one counter doing both jobs, in
+two places: `chain_attempts` in the store assigns a position per payment in the chain, and the
+simulator's `attempts_used` starts at 1 and is checked against `attempt_cap`. Both conflate a
+customer-initiated attempt with a system-initiated execution.
+
+The error is asymmetric, and in an awkward direction:
+
+- **Over-count** — treat customer link attempts as budget spend. Consequence: surrender
+  mandates that still have executions left, forfeiting recoverable money. Safe, and wrong.
+- **Under-count** — miss a real execution. Consequence: exceed the NPCI cap. That is a
+  compliance breach with UPI API access restrictions and onboarding suspension behind it.
+
+So the conservative direction is to over-count, which quietly makes the allocator worse at
+exactly the thing it exists to do — and does it invisibly, because a surrendered case that
+still had budget looks identical to a surrendered case that did not.
+
+**Options**
+Candidates, none chosen yet:
+
+1. Two counters on the case: `executions_used` (system-initiated, checked against the cap) and
+   `attempts_seen` (everything against the order, for reconciliation and diagnostics)
+2. Derive execution count from the mandate sequence number rather than from our own tally,
+   making it the rail's number rather than ours
+3. Tag every payment by initiator at ingest, so the distinction is a property of the record
+   rather than something inferred later
+
+**Resolution**
+**Not resolved.** Deferred deliberately: the fix touches the allocator's budget reasoning (C3)
+and the guard's cap check (C4), and both are hand-authored. Fixing the counter before the
+policy that reads it exists would be guessing at the interface.
+
+Recorded now, with a note added to `CLAUDE.md` under the regulatory constraints, so the
+distinction is visible before C4 starts rather than rediscovered inside it.
+
+The constraint any fix must satisfy: **the system already knows which attempts it initiated.**
+The information is available at the moment of the decision — it is simply not modelled. Nothing
+here requires inferring initiator from a payload after the fact.
+
+**Why it mattered**
+The cap is the scarce resource the entire project is about allocating. Miscounting it is not a
+detail at the edge, it is an error in the denominator of every claim the allocator makes.
+
+It also came from the same place as 007: a shape in real data that I explained away. The
+shared `order_id` was visible the moment the fixtures landed, and my first instinct was to
+attribute it to how I had captured them rather than to what the platform does. Two entries in
+a row where the real payloads knew something the design did not, and in both cases the tell was
+me finding a reason the data did not count.
+
+---
+
+## 009 — _(next entry)_
 
 **Date:**
 **Tags:**
