@@ -28,8 +28,14 @@ from recovery.sim.environment import (
     Proposal,
 )
 from recovery.sim.metrics import ArmMetrics
-from recovery.sim.run import run_arm, run_comparison
-from recovery.sim.world import RecoveryCurve, WorldConfigError, load_world_config, sample_world
+from recovery.sim.run import mandate_survival_dominance, run_arm, run_comparison
+from recovery.sim.world import (
+    RecoveryCurve,
+    WorldConfigError,
+    load_world_config,
+    mandate_hazard_range,
+    sample_world,
+)
 
 
 @pytest.fixture
@@ -407,3 +413,74 @@ def test_baseline_spends_attempts_on_unrecoverable_failures(small_world, calenda
     metrics = run_arm(ArmA(calendar), small_world, calendar)
     assert metrics.terminal_attempts_wasted > 0
     assert metrics.wasted_attempt_share > 0
+
+
+# --------------------------------- mandate survival: ordinal only --------- #
+
+
+def test_reported_row_carries_no_mandate_count(small_world, calendar):
+    """A count would rest on an invented revocation rate. The ordering does not."""
+    row = run_arm(ArmA(calendar), small_world, calendar).as_row()
+    assert not any("mandate" in key for key in row)
+
+
+def test_survival_counts_are_reachable_only_through_survival_row(small_world, calendar):
+    metrics = run_arm(ArmA(calendar), small_world, calendar)
+    survival = metrics.survival_row()
+    assert set(survival) == {"arm", "mandates_preserved", "mandates_halted", "mandates_revoked"}
+
+
+def test_dominance_holds_across_the_whole_hazard_range(small_world, calendar, classifier):
+    raw = load_world_config()
+    dominance = mandate_survival_dominance(
+        [ArmA(calendar), ArmB(calendar)],
+        small_world,
+        calendar,
+        mandate_hazard_range(raw),
+        points=5,
+        costs=classifier.config.costs,
+    )
+    assert dominance.ordering is not None
+    assert len(dominance.hazard_points) == 5
+    # Endpoints are swept deliberately: holding at both extremes of a wide range
+    # means the ordering holds for any rate a reader prefers inside it.
+    low, high = mandate_hazard_range(raw)
+    assert dominance.hazard_points[0] == pytest.approx(low)
+    assert dominance.hazard_points[-1] == pytest.approx(high)
+
+
+def test_dominance_describe_never_quotes_a_count(small_world, calendar, classifier):
+    dominance = mandate_survival_dominance(
+        [ArmA(calendar), ArmB(calendar)],
+        small_world,
+        calendar,
+        mandate_hazard_range(load_world_config()),
+        points=3,
+        costs=classifier.config.costs,
+    )
+    description = dominance.describe()
+    counts = [str(v) for values in dominance._counts.values() for v in values]
+    assert not any(count in description for count in counts if len(count) > 2)
+
+
+def test_dominance_detects_an_inversion():
+    """A stable ordering must be a finding, not an artefact of never checking."""
+    from recovery.sim.run import DominanceResult
+
+    inverted = DominanceResult(
+        arms=("A", "B"),
+        hazard_points=(0.01, 0.02, 0.03),
+        _counts={"A": (10, 8, 5), "B": (7, 9, 11)},
+        ordering=("A", "B"),
+        inversions=2,
+    )
+    assert not inverted.is_stable
+    assert inverted.crossover_points() == [0.02]
+
+
+def test_hazard_variant_changes_only_the_hazard(small_world):
+    variant = small_world.with_mandate_hazard(0.0333)
+    assert variant.revocation_per_notification == 0.0333
+    assert variant.recovery == small_world.recovery
+    assert variant.class_mix == small_world.class_mix
+    assert variant.emission_fidelity == small_world.emission_fidelity

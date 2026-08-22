@@ -12,6 +12,10 @@ Today that is three:
   printed are a single draw and are **not a result**: a defensible number needs
   C8's sweep. Arm C waits on the hand-authored allocator.
 
+  Mandate survival is printed as a **dominance ordering across the swept
+  revocation range**, never as a count. The count would rest on a
+  per-notification revocation rate nobody publishes; the ordering does not.
+
 As components land, each adds a section here. The rule is that nothing goes in
 the README that this command does not reproduce from a clean database.
 
@@ -35,8 +39,8 @@ from recovery.ingest import ingest_delivery
 from recovery.normalize import normalize_entity
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
-from recovery.sim.run import run_comparison
-from recovery.sim.world import sample_world
+from recovery.sim.run import mandate_survival_dominance, run_comparison
+from recovery.sim.world import load_world_config, mandate_hazard_range, sample_world
 from recovery.store import Store
 from recovery.worker import process_pending
 
@@ -191,7 +195,7 @@ def _c5_section(config, classifier) -> bool:
     )
     typer.echo(
         f"\n    {'arm':<5}{'recovered_INR':>15}{'attempts':>10}{'contacts':>10}"
-        f"{'term_att':>10}{'term_con':>10}{'preserved':>11}{'halted':>8}{'revoked':>9}"
+        f"{'term_att':>10}{'term_con':>10}"
     )
     for name in ("A", "B"):
         row = result.row(name)
@@ -199,8 +203,6 @@ def _c5_section(config, classifier) -> bool:
             f"    {name:<5}{row['money_recovered_inr']:>15,.2f}"
             f"{row['attempts_spent']:>10}{row['contacts_sent']:>10}"
             f"{row['terminal_attempts_wasted']:>10}{row['terminal_contacts_sent']:>10}"
-            f"{row['mandates_preserved']:>11}{row['mandates_halted']:>8}"
-            f"{row['mandates_revoked']:>9}"
         )
 
     metrics_a = result.metrics["A"]
@@ -212,7 +214,31 @@ def _c5_section(config, classifier) -> bool:
     typer.echo(
         f"    baseline burns {metrics_a.terminal_attempts_wasted} of "
         f"{metrics_a.attempts_spent} attempts "
-        f"({metrics_a.wasted_attempt_share:.0%}) on failures that cannot recover\n"
+        f"({metrics_a.wasted_attempt_share:.0%}) on failures that cannot recover"
+    )
+
+    # Mandate survival: an ordering, not a count. The count depends on an
+    # invented revocation hazard; the ordering survives the whole range.
+    dominance = mandate_survival_dominance(
+        [ArmA(calendar), ArmB(calendar)],
+        world,
+        calendar,
+        mandate_hazard_range(load_world_config()),
+        costs=classifier.config.costs,
+    )
+    typer.echo("\n  mandate survival -- reported as dominance, never as a count:")
+    typer.echo(f"    {dominance.describe()}")
+    typer.echo(
+        f"    ordering inversions across the range: {dominance.inversions}"
+        + (
+            f", crossing at {dominance.crossover_points()}"
+            if dominance.crossover_points()
+            else ""
+        )
+    )
+    typer.echo(
+        "    (no mandate count is printed anywhere: it would rest on a revocation\n"
+        "     rate nobody publishes. The ordering does not need one.)\n"
     )
 
     return all(
@@ -231,6 +257,11 @@ def _c5_section(config, classifier) -> bool:
                     + m.rejection_reasons.get("pdn_lead_time_unmet", 0)
                     for m in result.metrics.values()
                 ),
+                0,
+            ),
+            _check(
+                "no mandate count in the reported row",
+                sum("mandate" in key for key in result.row("A")),
                 0,
             ),
         ]

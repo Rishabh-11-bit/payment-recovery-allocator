@@ -91,3 +91,113 @@ def run_comparison(
             for arm in arms
         },
     )
+
+
+# --------------------------------------------------- mandate survival ------
+
+
+@dataclass(frozen=True)
+class DominanceResult:
+    """Mandate survival, reported as an ordering rather than a count.
+
+    A count of mandates preserved depends on a per-notification revocation
+    hazard, and no such rate is published -- inventing one and quoting the count
+    it produces would be a cardinal claim dressed as a result.
+
+    The *ordering* does not need the rate. Sweeping the hazard across its whole
+    configured range and observing that one arm preserves more at every point is
+    an ordinal claim, and it survives any hazard in the range. Where the ordering
+    inverts, that is the finding, and the crossover point is reported instead.
+    """
+
+    arms: tuple[str, ...]
+    hazard_points: tuple[float, ...]
+    # preserved counts per hazard point, per arm. Internal: used to establish the
+    # ordering and the crossover. Never a headline figure.
+    _counts: Mapping[str, tuple[int, ...]]
+    ordering: tuple[str, ...] | None
+    inversions: int
+
+    @property
+    def is_stable(self) -> bool:
+        """True when one ordering holds across the entire swept range."""
+        return self.inversions == 0 and self.ordering is not None
+
+    def crossover_points(self) -> list[float]:
+        """Hazard values where the ordering changes. Empty when stable."""
+        if len(self.arms) != 2:
+            return []
+        left, right = self.arms
+        crossings = []
+        deltas = [
+            self._counts[left][i] - self._counts[right][i]
+            for i in range(len(self.hazard_points))
+        ]
+        for i in range(1, len(deltas)):
+            if deltas[i - 1] == 0 or deltas[i] == 0:
+                continue
+            if (deltas[i - 1] > 0) != (deltas[i] > 0):
+                crossings.append(self.hazard_points[i])
+        return crossings
+
+    def describe(self) -> str:
+        if self.ordering is None:
+            return "no consistent ordering across the swept hazard range"
+        chain = " > ".join(self.ordering)
+        if self.is_stable:
+            low, high = self.hazard_points[0], self.hazard_points[-1]
+            return (
+                f"{chain} preserves more mandates at every hazard in "
+                f"[{low:.3f}, {high:.3f}] ({len(self.hazard_points)} points)"
+            )
+        return f"{chain} holds at most points, but the ordering inverts {self.inversions}x"
+
+
+def mandate_survival_dominance(
+    arms: Sequence[Arm],
+    world: World,
+    calendar: ComplianceCalendar,
+    hazard_range: tuple[float, float],
+    *,
+    points: int = 9,
+    costs: CostModel | None = None,
+) -> DominanceResult:
+    """Sweep the revocation hazard and report the ordering, never the counts.
+
+    Endpoints are included deliberately: if the ordering holds at both extremes
+    of a range chosen to be wide, it holds for any rate a reader might prefer
+    inside it.
+
+    This is C5's narrow version. C8 generalises the sweep to every parameter and
+    every metric; the discipline is the same.
+    """
+    low, high = hazard_range
+    step = (high - low) / (points - 1) if points > 1 else 0.0
+    hazard_points = tuple(low + step * index for index in range(points))
+
+    counts: dict[str, list[int]] = {arm.name: [] for arm in arms}
+    orderings: list[tuple[str, ...]] = []
+
+    for hazard in hazard_points:
+        variant = world.with_mandate_hazard(hazard)
+        result = run_comparison(arms, variant, calendar, costs=costs)
+        for name, metrics in result.metrics.items():
+            counts[name].append(metrics.mandates_preserved)
+        orderings.append(
+            tuple(
+                sorted(
+                    result.metrics,
+                    key=lambda name: -result.metrics[name].mandates_preserved,
+                )
+            )
+        )
+
+    first = orderings[0]
+    inversions = sum(1 for ordering in orderings if ordering != first)
+    return DominanceResult(
+        arms=tuple(arm.name for arm in arms),
+        hazard_points=hazard_points,
+        _counts={name: tuple(values) for name, values in counts.items()},
+        ordering=first if inversions == 0 else first,
+        inversions=inversions,
+    )

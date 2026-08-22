@@ -40,9 +40,23 @@ class ArmMetrics:
     terminal_attempts_wasted: int = 0
     terminal_contacts_sent: int = 0
 
-    # --- mandate survival ---
+    # --- mandate survival: INTERNAL, hazard-dependent, never a headline ---
+    #
+    # All three depend on `mandate.revocation_per_notification`, a rate nobody
+    # publishes. Quoting any of them as a figure would be a cardinal claim
+    # resting on an invented number.
+    #
+    # They exist because the sweep needs them: `mandate_survival_dominance`
+    # reads these to establish whether one arm preserves more than another
+    # across the whole hazard range, which is an ordinal claim and needs no
+    # rate. They are excluded from `as_row()` for that reason -- reach for them
+    # only through `survival_row()`, which says so at the call site.
     mandates_preserved: int = 0
     mandates_revoked: int = 0
+    # `halted` overlaps `preserved` on purpose: they measure different objects.
+    # A halted *subscription* needs manual intervention to recover; the
+    # underlying *mandate* is preserved unless revoked. Both facts matter, and
+    # collapsing them into a partition would lose one.
     mandates_halted: int = 0
 
     # --- diagnostics ---
@@ -92,6 +106,13 @@ class ArmMetrics:
         return self.terminal_attempts_wasted / self.attempts_spent if self.attempts_spent else 0.0
 
     def as_row(self) -> Mapping[str, object]:
+        """Reportable metrics.
+
+        Money recovered is the headline, as the bar requires. The `terminal_*`
+        counters are definitional. Mandate-survival counts are deliberately
+        absent -- they are hazard-dependent, and mandate survival is reported as
+        a dominance ordering instead. See `survival_row`.
+        """
         return {
             "arm": self.arm,
             "money_recovered_inr": round(self.money_recovered_inr, 2),
@@ -99,6 +120,17 @@ class ArmMetrics:
             "contacts_sent": self.contacts_sent,
             "terminal_attempts_wasted": self.terminal_attempts_wasted,
             "terminal_contacts_sent": self.terminal_contacts_sent,
+        }
+
+    def survival_row(self) -> Mapping[str, object]:
+        """Hazard-dependent counts, for the sweep only.
+
+        Every number here moves with `mandate.revocation_per_notification`,
+        which is an invented rate. Feed these to a dominance comparison; do not
+        print them as a result.
+        """
+        return {
+            "arm": self.arm,
             "mandates_preserved": self.mandates_preserved,
             "mandates_halted": self.mandates_halted,
             "mandates_revoked": self.mandates_revoked,

@@ -11,6 +11,7 @@ the environment holds the world.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import random
 from dataclasses import dataclass
@@ -93,6 +94,23 @@ class World:
     emission_fidelity: float
     remaining_lifetime_months: float
 
+    def with_mandate_hazard(
+        self, revocation_per_notification: float, fatigue_multiplier: float | None = None
+    ) -> World:
+        """A copy of this world with the revocation hazard moved.
+
+        Used to sweep the one parameter that mandate-survival counts depend on.
+        The counts themselves are never reported; only whether the *ordering*
+        between arms holds across the range.
+        """
+        return dataclasses.replace(
+            self,
+            revocation_per_notification=revocation_per_notification,
+            fatigue_multiplier=(
+                self.fatigue_multiplier if fatigue_multiplier is None else fatigue_multiplier
+            ),
+        )
+
     def revocation_hazard(self, failure_class: FailureClass, notification_index: int) -> float:
         """P(revoke) for the nth customer-visible notification, n from 1.
 
@@ -104,6 +122,14 @@ class World:
         base *= self.revocation_class_multiplier[failure_class]
         base *= self.fatigue_multiplier ** max(0, notification_index - 1)
         return min(1.0, base)
+
+
+def mandate_hazard_range(raw: Mapping[str, Any]) -> Range:
+    """The configured revocation range, for sweeping rather than for sampling."""
+    return _as_range(
+        (raw.get("mandate") or {}).get("revocation_per_notification"),
+        "mandate.revocation_per_notification",
+    )
 
 
 def load_world_config(path: pathlib.Path | str = DEFAULT_WORLDS_PATH) -> dict[str, Any]:

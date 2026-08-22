@@ -29,11 +29,12 @@ See `PRIOR_ART.md` for the full boundary analysis.
 | `CLAUDE.md` | Architecture, constraints, and hard rules |
 | `PRIOR_ART.md` | What exists at Razorpay and where this layer sits |
 | `CHALLENGES.md` | Running build log |
-| `ASSUMPTIONS.md` _(pending)_ | Every parameter, marked ordinal or cardinal, with sources |
+| `ASSUMPTIONS.md` _(seeded)_ | Every parameter, marked ordinal or cardinal, with sources |
 | `NOT_BUILT.md` _(pending)_ | Deliberately rejected scope, with reasons |
 | `THREAT_MODEL.md` _(pending)_ | What breaks in production that does not break here |
 
-_(pending)_ documents are Phase 5 deliverables and are not yet written.
+_(pending)_ documents are Phase 5 deliverables and are not yet written. `ASSUMPTIONS.md`
+is _(seeded)_: it holds one entry, for the mandate revocation hazard introduced by C5.
 
 ## Running
 
@@ -83,6 +84,12 @@ Arm A is Razorpay's documented schedule, reimplemented and cause-blind: Card and
 T+1/T+2/T+3 then halted, Emandate asynchronous with bank-holiday shifting. Arm B adds one
 generic recovery link per failure, so A→B isolates the value of contact and B→C will
 isolate the value of cause-awareness.
+
+**Mandate survival is reported as a dominance ordering, never as a count.** A count
+depends on a per-notification revocation rate nobody publishes. The ordering does not:
+the hazard is swept across its full configured range, and what is reported is whether
+one arm preserves more than another at every point, and whether the ordering inverts.
+Same discipline as LTV — swept, never quoted at a point. See `ASSUMPTIONS.md`.
 
 **The figures `reproduce` prints for C5 are a single world draw and are not a result.**
 A defensible number needs C8's sweep across sampled worlds and its stated breaking point.
