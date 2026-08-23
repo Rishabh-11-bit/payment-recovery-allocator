@@ -181,12 +181,22 @@ def test_unmapped_keys_are_ranked_by_frequency(classifier):
     assert counts == sorted(counts, reverse=True)
 
 
-def test_unmapped_keys_carry_ground_truth(classifier):
+def test_unmapped_keys_carry_ground_truth_when_any_exist(classifier):
+    """The taxonomy now covers the simulator's key space, so this may be empty.
+
+    The accounting still has to hold if a future emission adds a key.
+    """
     report = analyse(classifier, seeds=(11, 42))
-    assert report.unmapped_keys, "the stub taxonomy must leave keys uncovered"
     for stats in report.unmapped_keys:
         assert stats.true_classes
         assert sum(stats.true_classes.values()) == stats.count
+
+
+def test_taxonomy_covers_the_simulated_key_space(classifier):
+    report = analyse(classifier, seeds=(11, 42, 101, 202, 303))
+    assert report.unmapped == 0, (
+        "uncovered keys: " + ", ".join(s.describe for s in report.unmapped_keys)
+    )
 
 
 def test_unmapped_keys_are_full_four_part_tuples(classifier):

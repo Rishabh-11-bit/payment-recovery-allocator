@@ -2,8 +2,8 @@
 
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
-**Status:** Phase 1 — C1 event core, C2 classifier machinery, C5 simulator with arms A and B.
-The classifier's taxonomy and cost matrix are not yet authored; C3 allocator (arm C) not built.
+**Status:** Phase 2 — C1 event core, C2 classifier (taxonomy authored), C3 allocator,
+C5 simulator with all three arms, C7 property-based invariant tests. Cost values still stubbed.
 
 ---
 
@@ -93,6 +93,26 @@ Same discipline as LTV — swept, never quoted at a point. See `ASSUMPTIONS.md`.
 
 **The figures `reproduce` prints for C5 are a single world draw and are not a result.**
 A defensible number needs C8's sweep across sampled worlds and its stated breaking point.
+
+**C7 — property-based invariants.** The safety invariant is *never create a payment
+obligation outside the original order's attempt chain while that chain is within its
+late-authorisation window.* Orderings are generated rather than hand-written —
+duplicate deliveries, out-of-order deliveries, failed-then-late-authorized inside the
+3-day window, a worker crashing between claim and finish, two workers on one case,
+order expiry mid-recovery, a PDN window shift.
+
+```
+python -m recovery.reproduce --c7-sequences 5000
+```
+
+The count explored is printed, because a clean run is worth only the size of the
+search. Two hazards are generated but **not yet enforced** — order expiry and PDN
+window shift are C4's checks — and the output names them, so a clean run cannot be
+read as "everything is handled".
+
+The search is validated by mutation: `tests/test_c7_invariants.py` removes the
+late-authorisation guard, and separately splits the attempt chain, and asserts the
+search finds each. A search that cannot find a planted bug is not evidence of absence.
 
 Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
 at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and

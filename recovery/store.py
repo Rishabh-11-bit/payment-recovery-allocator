@@ -23,7 +23,7 @@ import pathlib
 import sqlite3
 import uuid
 from collections.abc import Iterator, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from recovery.models import (
     AuditEvent,
@@ -128,12 +128,19 @@ def _now() -> datetime:
 
 class Store:
     def __init__(self, path: str | pathlib.Path) -> None:
-        self.path = pathlib.Path(path)
-        if str(self.path.parent) not in ("", "."):
+        # A `file:...?mode=memory&cache=shared` URI opens a named in-memory
+        # database that several connections can share. C7 runs thousands of
+        # scenarios and the disk round-trip dominated everything else.
+        uri = isinstance(path, str) and path.startswith("file:")
+        self.path = path if uri else pathlib.Path(path)
+        if not uri and str(self.path.parent) not in ("", "."):
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path, isolation_level=None)
+        self._conn = sqlite3.connect(
+            self.path if uri else str(self.path), isolation_level=None, uri=uri
+        )
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode = WAL")
+        if not uri:
+            self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
 
     def initialise(self) -> None:
@@ -192,13 +199,48 @@ class Store:
         )
         return cursor.rowcount == 1
 
-    def claim_jobs(self, batch_size: int) -> list[sqlite3.Row]:
+    def claim_jobs(
+        self,
+        batch_size: int,
+        *,
+        claim_timeout_seconds: float | None = None,
+        max_attempts: int | None = None,
+    ) -> list[sqlite3.Row]:
+        """Claim pending work, and reclaim work abandoned by a dead worker.
+
+        A worker that dies between claiming a job and finishing it leaves the
+        row in `claimed` forever. Without reclaim the event is silently dropped:
+        safe -- no obligation is created -- but the recovery never happens and
+        nothing says so. Found by the C7 search, which generates exactly that
+        crash.
+
+        `max_attempts` stops a job that kills its worker every time from being
+        reclaimed indefinitely; it is failed instead, visibly.
+        """
+        cutoff = None
+        if claim_timeout_seconds is not None:
+            cutoff = (
+                _now() - timedelta(seconds=claim_timeout_seconds)
+            ).isoformat()
+
         with self.transaction() as conn:
+            if max_attempts is not None:
+                conn.execute(
+                    "UPDATE jobs SET state='failed' "
+                    "WHERE state='claimed' AND attempts >= ?",
+                    (max_attempts,),
+                )
+            if cutoff is None:
+                where = "j.state = 'pending'"
+                params: tuple = (batch_size,)
+            else:
+                where = "(j.state = 'pending' OR (j.state = 'claimed' AND j.claimed_at < ?))"
+                params = (cutoff, batch_size)
             rows = conn.execute(
                 "SELECT j.job_id, j.event_id, j.attempts, r.body_json, r.headers_json, "
                 "r.created_at FROM jobs j JOIN raw_events r ON r.event_id = j.event_id "
-                "WHERE j.state = 'pending' ORDER BY r.created_at, j.rowid LIMIT ?",
-                (batch_size,),
+                f"WHERE {where} ORDER BY r.created_at, j.rowid LIMIT ?",
+                params,
             ).fetchall()
             for row in rows:
                 conn.execute(
@@ -214,6 +256,12 @@ class Store:
     def pending_job_count(self) -> int:
         return int(
             self._conn.execute("SELECT COUNT(*) FROM jobs WHERE state='pending'").fetchone()[0]
+        )
+
+    def claimed_job_count(self) -> int:
+        """Jobs a worker took and never finished. Liveness, not safety."""
+        return int(
+            self._conn.execute("SELECT COUNT(*) FROM jobs WHERE state='claimed'").fetchone()[0]
         )
 
     # ---------------------------------------------------------------- cases --

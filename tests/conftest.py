@@ -30,5 +30,9 @@ def gateway() -> SimulatedGateway:
 
 @pytest.fixture
 def classifier():
-    """The shipped file is still a stub; tests opt in deliberately."""
-    return load_classifier(pathlib.Path("config/classifier.yaml"), allow_stub=True)
+    """The shipped taxonomy, loaded without the stub opt-in.
+
+    No `allow_stub=True`: the file is authored, and the fixture failing would be
+    the correct signal if it ever regressed to a stub.
+    """
+    return load_classifier(pathlib.Path("config/classifier.yaml"))

@@ -52,19 +52,23 @@ def key(method=None, source=None, step=None, reason=None, **kwargs) -> Normalize
 # ------------------------------------------------------------ stub gate ---- #
 
 
-def test_stub_config_refuses_to_load_by_default():
+def test_stub_config_refuses_to_load_by_default(tmp_path):
     """An unfinished taxonomy must not quietly produce results."""
+    path = write_config(tmp_path, status="STUB")
     with pytest.raises(ClassifierConfigError, match="STUB"):
-        load_classifier(SHIPPED)
+        load_classifier(path)
 
 
-def test_stub_config_loads_when_opted_into():
-    assert load_classifier(SHIPPED, allow_stub=True) is not None
+def test_stub_config_loads_when_opted_into(tmp_path):
+    path = write_config(tmp_path, status="STUB")
+    assert load_classifier(path, allow_stub=True) is not None
 
 
-def test_authored_config_needs_no_opt_in(tmp_path):
-    path = write_config(tmp_path, status="AUTHORED")
-    assert load_classifier(path) is not None
+def test_shipped_taxonomy_is_authored():
+    """The gate is only useful if the shipped file has actually passed it."""
+    classifier = load_classifier(SHIPPED)
+    assert not classifier.config.is_stub
+    assert classifier.config.rules
 
 
 # --------------------------------------------------------- loader rigour --- #

@@ -1,15 +1,22 @@
 # =============================================================================
-# STUB — NOT AUTHORED. The rows below are illustrative machinery tests, not the
-# taxonomy. The real (method, source, step, reason) -> class mapping and the
-# cost matrix are hand-authored (CLAUDE.md, "Do not write these for me").
+# AUTHORED. The classifier reads this file and contains no mapping of its own.
 #
-# The classifier reads this file. It does not contain a mapping of its own, and
-# it will not run with `status: STUB` unless explicitly allowed — see
-# `load_classifier(allow_stub=...)`.
+# Provenance differs by row and is worth knowing before defending any of them:
+#
+#   * The two `insufficient_funds` rows and the six deliberately-low rows are
+#     authored, each with its reasoning in the note.
+#   * The `international_transaction_not_allowed` and netbanking `payment_failed`
+#     rows come from captured test-mode payloads.
+#   * The remaining UPI rows are derived from the error-parameters reference and
+#     are **not** backed by a capture. Test mode never exposed UPI, which is the
+#     project's primary rail — see ASSUMPTIONS.md. They are the rows most likely
+#     to be wrong.
+#
+# The cost values below remain stubbed and are still to be authored.
 # =============================================================================
 
-status: STUB
-version: "0.0.0-stub"
+status: AUTHORED
+version: "1.0.0"
 
 # --- Value space ------------------------------------------------------------
 # Method-partitioned: the legal `source` values differ per method.
@@ -233,12 +240,30 @@ rules:
     deliberately_low_confidence: true
     note: "Same ambiguity as the card case."
 
-# --- Left for authoring -----------------------------------------------------
-# Two high-purity keys are deliberately NOT written here. Both are
-# insufficient_funds, both are unambiguous, and both deserve confident rows:
+# --- Confident rows ---------------------------------------------------------
+# `insufficient_funds` names the cause directly and has no competing
+# interpretation, unlike `payment_failed` or `gateway_technical_error`. The bank
+# is stating that the account lacked balance. That specificity is why these band
+# HIGH while the six ambiguous keys above do not — the difference is not how
+# common the key is, it is whether the payload admits a second reading.
 #
-#   card/issuer_bank/payment_authorization/insufficient_funds
-#   emandate/bank/payment_debit_response/insufficient_funds
-#
-# They are the highest-value rows still missing -- LIQUIDITY at a confident band
-# is what earns a funding-window retry instead of a link.
+# A confident LIQUIDITY band is what earns a funding-window retry instead of a
+# recovery link, so these two rows carry more of the allocator's behaviour than
+# any others.
+
+  - match: {method: card, source: issuer_bank, step: payment_authorization, reason: insufficient_funds}
+    class: LIQUIDITY
+    confidence: 0.93
+    cause_family: funding
+    note: >-
+      The issuer is stating the account lacked balance. No competing reading:
+      the instrument is valid, the mandate is valid, the balance is not.
+
+  - match: {method: emandate, source: bank, step: payment_debit_response, reason: insufficient_funds}
+    class: LIQUIDITY
+    confidence: 0.93
+    cause_family: funding
+    note: >-
+      Same reasoning as the card row. Note `source: bank` — the undocumented
+      value found in the captures and added to the value space on that evidence
+      rather than on the reference. See CHALLENGES 007.

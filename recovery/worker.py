@@ -109,7 +109,11 @@ def process_pending(
     decider = decider or PendingAllocatorDecider()
     stats = WorkerStats()
 
-    for row in store.claim_jobs(config.worker.batch_size):
+    for row in store.claim_jobs(
+        config.worker.batch_size,
+        claim_timeout_seconds=config.worker.claim_timeout_seconds,
+        max_attempts=config.worker.max_attempts_per_job,
+    ):
         envelope = WebhookEnvelope(
             event_id=row["event_id"],
             event="payment.failed",

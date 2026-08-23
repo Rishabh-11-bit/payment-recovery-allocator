@@ -41,6 +41,7 @@ from recovery.config import DEFAULT_CONFIG_PATH, load_config
 from recovery.fixtures import build_delivery
 from recovery.gateway import SimulatedGateway
 from recovery.ingest import ingest_delivery
+from recovery.invariants import UNGUARDED_HAZARDS, search as invariant_search
 from recovery.normalize import normalize_entity
 from allocator.arm_c import ArmC
 from recovery.sim.arms import ArmA, ArmB
@@ -82,6 +83,12 @@ def main(
     classifier_path: pathlib.Path = typer.Option(DEFAULT_CLASSIFIER_PATH, "--classifier"),
     db_path: pathlib.Path = typer.Option(
         pathlib.Path("data/reproduce.db"), "--db", help="Recreated from scratch on every run."
+    ),
+    c7_sequences: int = typer.Option(
+        500,
+        "--c7-sequences",
+        help="Adversarial orderings to search for an invariant violation. "
+        "The default keeps this command quick; raise it for a deeper search.",
     ),
 ) -> None:
     config = load_config(config_path)
@@ -129,6 +136,7 @@ def main(
 
     passed = _c2_section(classifier) and passed
     passed = _c5_section(config, classifier) and passed
+    passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
 
     store.close()
     typer.echo("\nreproduce: " + ("OK" if passed else "FAILED"))
@@ -182,6 +190,52 @@ def _c2_section(classifier) -> bool:
             _check("anomalous source is not trusted", int(anomalous.mapped), 0),
             _check("unmapped confidence is zero", int(unmapped.confidence * 100), 0),
             _check("unmapped may not exclude", int(unmapped.may_exclude_instrument), 0),
+        ]
+    )
+
+
+def _c7_section(config, classifier, tmp_dir, sequences: int) -> bool:
+    """C7: hunt the safety invariant across generated adversarial orderings."""
+    typer.echo("\n\nC7 invariants -- adversarial event orderings\n")
+    typer.echo(
+        "  Hunting: never create a payment obligation outside the original order's"
+    )
+    typer.echo(
+        "  attempt chain while that chain is within its late-authorisation window.\n"
+    )
+    report = invariant_search(config, classifier, tmp_dir, sequences=sequences)
+    typer.echo(f"    {report.describe()}")
+    typer.echo("")
+    typer.echo(
+        "    Generated, not hand-written: duplicate deliveries, out-of-order deliveries,"
+    )
+    typer.echo(
+        "    failed-then-late-authorized inside the 3-day window, a worker crashing"
+    )
+    typer.echo(
+        "    between claim and finish, two workers on one case, order expiry mid-recovery,"
+    )
+    typer.echo("    and a PDN window shift.")
+    typer.echo("")
+    typer.echo("    NOT YET ENFORCED (generated, but no check consumes them):")
+    for hazard in UNGUARDED_HAZARDS:
+        typer.echo(f"      - {hazard}")
+    typer.echo("")
+    typer.echo(
+        "    A clean run is worth only the size of the search, and only if the search can"
+    )
+    typer.echo(
+        "    fail. tests/test_c7_invariants.py plants two bugs -- a removed"
+    )
+    typer.echo(
+        "    late-authorisation guard and a split chain -- and asserts the search finds"
+    )
+    typer.echo("    both. Raise --c7-sequences for a deeper hunt.")
+    typer.echo("")
+    return all(
+        [
+            _check("invariant violations found", len(report.violations), 0),
+            _check("orderings explored", report.sequences_explored, sequences),
         ]
     )
 
