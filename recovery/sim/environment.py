@@ -46,12 +46,29 @@ class CaseOutcome(str, enum.Enum):
 
 @dataclass(frozen=True)
 class Proposal:
-    """What an arm asks for. Kept minimal: arms do not schedule, they request."""
+    """What an arm asks for. Kept minimal: arms do not schedule, they request.
+
+    `action`, `channel` and `shaping` are descriptive metadata for the audit
+    trail and for reporting. **The environment does not price them.** A
+    card-change offer and a generic recovery link are both one CONTACT and
+    convert at the same class-dependent rate.
+
+    That is a deliberate, conservative choice. Modelling a card-change offer as
+    converting better than a generic link on a dead card is almost certainly
+    true, but it would be a new invented cardinal that happens to favour the
+    arm proposing it -- exactly the failure recorded in CHALLENGES 002. Until
+    there is a source for the uplift, Arm C's advantage on TERMINAL is measured
+    only as attempts and notifications saved, which is definitional. This
+    understates Arm C rather than flattering it.
+    """
 
     case_id: str
     kind: ActionKind
     execute_at: dt.datetime
     note: str = ""
+    action: str | None = None
+    channel: str | None = None
+    shaping: str | None = None
 
 
 @dataclass

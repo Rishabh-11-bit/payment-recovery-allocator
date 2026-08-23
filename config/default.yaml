@@ -32,6 +32,39 @@ late_auth:
   # webhook payload -- that is the whole point of the refresh.
   require_state_refresh: true
 
+# --- Allocator (C3) ---------------------------------------------------------
+# ORDINAL ONLY. Every value here is a day offset, a day-of-month, a channel
+# name or a count. There is deliberately no probability in this block, and none
+# may be added: the policy may depend on orderings, never on magnitudes.
+allocator:
+  version: "1.0.0"
+
+  infrastructure:
+    # "Tomorrow" at HIGH; later at MODERATE. The ordering is the content --
+    # a transient fault is most likely already gone, and less confidence in
+    # that diagnosis buys more time before spending a capped execution.
+    high_offset_days: 1
+    moderate_offset_days: 2
+
+  liquidity:
+    # Never sooner than this: the customer is broke today, and the ordinal fact
+    # is that liquidity recovers better later than sooner.
+    min_offset_days: 2
+    # Days of the month when salaries and similar credits typically land.
+    # A structural claim about when money arrives, not a probability that it
+    # will. See ASSUMPTIONS.md.
+    funding_days_of_month: [1, 2, 3, 28, 29, 30, 31]
+    # Do not wait past this looking for a funding day -- the horizon and the
+    # attempt cap both bound how long holding is worth it.
+    max_wait_days: 6
+
+  contact:
+    default_channel: sms
+    # ATTENTION means the customer was reached and did not act. Reaching them
+    # the same way again is the one thing already known not to work.
+    attention_channel: whatsapp
+    max_per_case: 1
+
 # Consumed by C4 (guard). Recorded here from day one so the NPCI constants live
 # in config rather than in code. NOT read by C1.
 regulatory:

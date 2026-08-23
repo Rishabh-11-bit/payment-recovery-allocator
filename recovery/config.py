@@ -46,6 +46,39 @@ class LateAuthConfig(_Strict):
     require_state_refresh: bool
 
 
+class InfrastructureConfig(_Strict):
+    high_offset_days: Annotated[int, Field(ge=1)]
+    moderate_offset_days: Annotated[int, Field(ge=1)]
+
+
+class LiquidityConfig(_Strict):
+    min_offset_days: Annotated[int, Field(ge=1)]
+    funding_days_of_month: tuple[Annotated[int, Field(ge=1, le=31)], ...]
+    max_wait_days: Annotated[int, Field(ge=1)]
+
+
+class ContactConfig(_Strict):
+    default_channel: str
+    attention_channel: str
+    max_per_case: Annotated[int, Field(ge=0)]
+
+
+class AllocatorConfig(_Strict):
+    """Ordinal knobs only. A probability here would be a bug, not a setting."""
+
+    version: str
+    infrastructure: InfrastructureConfig
+    liquidity: LiquidityConfig
+    contact: ContactConfig
+
+    @field_validator("liquidity")
+    @classmethod
+    def _later_is_later(cls, value: LiquidityConfig) -> LiquidityConfig:
+        if value.max_wait_days < value.min_offset_days:
+            raise ValueError("liquidity.max_wait_days is before min_offset_days")
+        return value
+
+
 class RegulatoryConfig(_Strict):
     """Consumed by C4. Recorded from day one so the NPCI constants live in config."""
 
@@ -66,6 +99,7 @@ class RegulatoryConfig(_Strict):
 
 class Config(_Strict):
     policy: PolicyConfig
+    allocator: AllocatorConfig
     database: DatabaseConfig
     ingest: IngestConfig
     worker: WorkerConfig

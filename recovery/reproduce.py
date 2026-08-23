@@ -7,10 +7,15 @@ Today that is three:
 * **C2** -- an unmapped key is distinguishable from a real classification: it
   reports `mapped=False`, zero confidence, a LOW band, and may not exclude an
   instrument. The classes shown are illustrative while the taxonomy is a stub.
-* **C5** -- arms A and B over one sampled world, with the compliance
+* **C3 + C5** -- all three arms over one sampled world, with the compliance
   constraints enforced by the environment rather than by the arms. The figures
   printed are a single draw and are **not a result**: a defensible number needs
-  C8's sweep. Arm C waits on the hand-authored allocator.
+  C8's sweep.
+
+  Arm C's money figure is additionally bounded by **classifier coverage**,
+  which is printed alongside it. An unmapped key falls to the LOW row -- one
+  link, no execution -- so with a stub taxonomy Arm C behaves like a link-only
+  arm on whatever the table does not cover, however good the table is.
 
   Mandate survival is printed as a **dominance ordering across the swept
   revocation range**, never as a count. The count would rest on a
@@ -37,6 +42,7 @@ from recovery.fixtures import build_delivery
 from recovery.gateway import SimulatedGateway
 from recovery.ingest import ingest_delivery
 from recovery.normalize import normalize_entity
+from allocator.arm_c import ArmC
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
 from recovery.sim.run import mandate_survival_dominance, run_comparison
@@ -179,12 +185,11 @@ SIM_SEED = 42
 
 
 def _c5_section(config, classifier) -> bool:
-    """C5: arms A and B over one sampled world. Arm C awaits the allocator."""
+    """C5: all three arms over one sampled world."""
     world = sample_world(seed=SIM_SEED)
     calendar = calendar_from_config(config.regulatory)
-    result = run_comparison(
-        [ArmA(calendar), ArmB(calendar)], world, calendar, costs=classifier.config.costs
-    )
+    arms = [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)]
+    result = run_comparison(arms, world, calendar, costs=classifier.config.costs)
 
     typer.echo(f"\nC5 simulator -- arms A and B, world seed {SIM_SEED}\n")
     typer.echo(
@@ -197,7 +202,7 @@ def _c5_section(config, classifier) -> bool:
         f"\n    {'arm':<5}{'recovered_INR':>15}{'attempts':>10}{'contacts':>10}"
         f"{'term_att':>10}{'term_con':>10}"
     )
-    for name in ("A", "B"):
+    for name in ("A", "B", "C"):
         row = result.row(name)
         typer.echo(
             f"    {name:<5}{row['money_recovered_inr']:>15,.2f}"
@@ -206,21 +211,53 @@ def _c5_section(config, classifier) -> bool:
         )
 
     metrics_a = result.metrics["A"]
+    metrics_b = result.metrics["B"]
+    metrics_c = result.metrics["C"]
+
+    # Three arms so the uplift decomposes. A -> C alone would conflate the value
+    # of contacting people with the value of knowing why they failed.
     typer.echo(
-        f"\n    A -> B contact uplift: Rs {result.uplift('B', 'A'):,.2f} "
-        f"(bought with {result.metrics['B'].contacts_sent} contacts, "
-        f"{result.metrics['B'].terminal_contacts_sent} of them structurally wasted)"
+        f"\n    A -> B  contact uplift:          Rs {result.uplift('B', 'A'):>12,.2f}"
+        "   (value of contacting people)"
     )
     typer.echo(
-        f"    baseline burns {metrics_a.terminal_attempts_wasted} of "
-        f"{metrics_a.attempts_spent} attempts "
-        f"({metrics_a.wasted_attempt_share:.0%}) on failures that cannot recover"
+        f"    B -> C  cause-awareness uplift: Rs {result.uplift('C', 'B'):>12,.2f}"
+        "   (value of knowing why)"
     )
+    typer.echo(
+        f"\n    attempts spent where recovery is impossible: "
+        f"A {metrics_a.terminal_attempts_wasted}, "
+        f"B {metrics_b.terminal_attempts_wasted}, "
+        f"C {metrics_c.terminal_attempts_wasted}"
+    )
+    typer.echo(
+        f"    share of the capped budget wasted:           "
+        f"A {metrics_a.wasted_attempt_share:.0%}, "
+        f"B {metrics_b.wasted_attempt_share:.0%}, "
+        f"C {metrics_c.wasted_attempt_share:.0%}"
+    )
+
+    # Classifier coverage bounds what the allocator can do. An unmapped key
+    # lands in the LOW row, which is correct and conservative -- one link, no
+    # execution. The more of the batch is unmapped, the more Arm C behaves like
+    # a link-only arm regardless of how good the decision table is. Printed
+    # because a money figure for Arm C is uninterpretable without it.
+    arm_c = ArmC(calendar, classifier, config)
+    coverage = _coverage(arm_c, world)
+    typer.echo(
+        f"\n    classifier coverage on this batch: {coverage:.0%} mapped "
+        f"({1 - coverage:.0%} fall to the LOW row)"
+    )
+    if classifier.config.is_stub:
+        typer.echo(
+            "    ^ the taxonomy is a STUB. Arm C's money figure is bounded by this,\n"
+            "      not by the decision table. Do not read it as the allocator's ceiling."
+        )
 
     # Mandate survival: an ordering, not a count. The count depends on an
     # invented revocation hazard; the ordering survives the whole range.
     dominance = mandate_survival_dominance(
-        [ArmA(calendar), ArmB(calendar)],
+        [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)],
         world,
         calendar,
         mandate_hazard_range(load_world_config()),
@@ -246,6 +283,11 @@ def _c5_section(config, classifier) -> bool:
             _check("arms saw the same batch", result.metrics["B"].cases, metrics_a.cases),
             _check("baseline sends no contacts", metrics_a.contacts_sent, 0),
             _check(
+                "allocator wastes fewer attempts than the baseline",
+                int(metrics_c.terminal_attempts_wasted < metrics_a.terminal_attempts_wasted),
+                1,
+            ),
+            _check(
                 "arm B contacts every case once",
                 result.metrics["B"].contacts_sent,
                 result.metrics["B"].cases,
@@ -266,6 +308,31 @@ def _c5_section(config, classifier) -> bool:
             ),
         ]
     )
+
+
+def _coverage(arm, world) -> float:
+    """Share of the batch the taxonomy actually maps, as the allocator sees it."""
+    from recovery.sim.batch import generate_batch
+    from recovery.sim.environment import CaseOutcome, CaseView
+
+    batch = generate_batch(world)
+    mapped = 0
+    for failure in batch:
+        view = CaseView(
+            case_id=failure.case_id,
+            rail=failure.rail,
+            amount_paise=failure.amount_paise,
+            failed_at=failure.failed_at,
+            observed=failure.observed(),
+            attempts_used=1,
+            contacts_used=0,
+            outcome=CaseOutcome.OPEN,
+            attempt_pending=False,
+            last_attempt_resolved_at=None,
+        )
+        if arm.classify(view).mapped:
+            mapped += 1
+    return mapped / len(batch) if batch else 0.0
 
 
 def _summarise(outcomes: list[str]) -> str:
