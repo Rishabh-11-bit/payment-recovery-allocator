@@ -120,6 +120,33 @@ The search is validated by mutation: `tests/test_c7_invariants.py` removes the
 late-authorisation guard, and separately splits the attempt chain, and asserts the
 search finds each. A search that cannot find a planted bug is not evidence of absence.
 
+**C8 — robustness sweep.** Every cardinal value is redrawn per world — recovery
+curves, link conversion, revocation hazard, failure mix, rail mix, emission fidelity
+— and all three arms run in each. Two range sets: `nominal` samples inside the
+calibrated ranges, `stress` widens them past calibration to locate the edge.
+
+```
+python -m recovery.reproduce --sweep-worlds 300
+```
+
+The output is the **breaking point**, not a win rate. Verified over 300 worlds per
+range set:
+
+| | vs A | vs B |
+|---|---|---|
+| C ahead by 12 months | 91% of worlds | 96% |
+| Crossover, p10 / median / p90 | 0.2 / 1.2 / 5.2 months | 0.3 / 1.5 / 5.2 |
+| Never overtakes | 25 worlds | 7 |
+
+**C loses where the revocation hazard is low** — below ~0.010–0.014 per
+notification, C loses 30–60% of those worlds against 2–7% elsewhere. The mechanism
+is plain: if repeated failure notifications cost few mandates, protecting mandates
+buys little and contacting everyone wins. That parameter is the least evidenced
+number in the project, so **the result depends most on what can be defended least**.
+See `ASSUMPTIONS.md`.
+
+Arm B wins cycle recovery in ~93% of worlds. Arm C's case is entirely the horizon.
+
 Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
 at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and
 logged, never rejected: 24h of non-2xx disables the webhook.

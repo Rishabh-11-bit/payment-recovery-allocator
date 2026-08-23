@@ -111,3 +111,37 @@ emission:
 # would be a cardinal claim dressed as a result.
 ltv:
   remaining_lifetime_months: [6, 18]
+
+# =============================================================================
+# STRESS RANGES -- deliberately wider than calibration, for C8's breaking-point
+# search only. Never used to produce a reported figure.
+#
+# A sweep confined to the calibrated ranges can only answer "does it hold where
+# we think we are". It cannot answer "where does it break", because the break
+# may lie outside those ranges entirely. These widen the parameters most likely
+# to invert the result, so the breaking point can be named rather than assumed
+# absent.
+#
+# Applied by `stress_config()`, which deep-merges these over the ranges above.
+# =============================================================================
+stress:
+  recovery:
+    LIQUIDITY:
+      # Down to zero: liquidity recovery that is time-INDEPENDENT. The whole
+      # timing argument for the LIQUIDITY cells rests on this being positive,
+      # so zero is the assumption's own breaking point.
+      per_day: [0.0, 0.09]
+    INFRASTRUCTURE:
+      # Up through zero: a fault that does not decay.
+      per_day: [-0.06, 0.02]
+  link_conversion:
+    # High TERMINAL link conversion makes contacting a dead card pay, which is
+    # exactly the condition under which arm B's contact-everyone policy wins.
+    TERMINAL: [0.00, 0.35]
+    ATTENTION: [0.05, 0.45]
+  mandate:
+    # Both far below and far above the calibrated range.
+    revocation_per_notification: [0.001, 0.090]
+  emission:
+    # Down to near-noise: a classifier signal too weak to act on.
+    fidelity: [0.40, 1.00]

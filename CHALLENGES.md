@@ -510,7 +510,137 @@ me finding a reason the data did not count.
 
 ---
 
-## 009 — _(next entry)_
+## 009 — The safety invariant held perfectly while the system quietly stopped working
+
+**Date:** Phase 2
+**Tags:** `#safety` `#architecture` `#evaluation`
+
+**Problem**
+C7 generates adversarial event orderings and hunts one invariant: never create a payment
+obligation outside the original order's attempt chain. One of the generated hazards is a
+worker crashing between claiming a job and finishing it. Thousands of orderings including
+that crash ran clean.
+
+They ran clean because the crash produces *no* obligation. The job is left in `claimed`,
+nothing reclaims it, and the event is dropped. Silently, permanently. The invariant was
+satisfied in the most complete way possible: nothing happened at all.
+
+**Diagnosis**
+`claim_timeout_seconds` had been in `config/default.yaml` since the first scaffold commit,
+described in a comment as "a claimed job older than this is considered abandoned and may be
+re-claimed." Nothing read it. `claim_jobs` selected `WHERE state = 'pending'` and no code
+path ever moved a row out of `claimed`.
+
+So the config documented a behaviour the code did not have, and the tests agreed with the
+code because every test that crashed a worker asserted safety properties — no duplicate
+decision, no obligation outside the chain — all of which a dropped event satisfies
+trivially.
+
+The real diagnosis is about the shape of the property, not the bug. **A safety invariant
+says "nothing bad happens". Doing nothing is the easiest way to satisfy it.** Every
+liveness failure — the recovery that never runs, the case that never closes, the queue
+that silently stops draining — passes a safety-only test suite perfectly.
+
+For this system that failure mode is not academic. The whole thing exists to recover
+payments. An event core that drops a `payment.failed` on the floor is indistinguishable,
+from the safety tests' point of view, from one working correctly, and the money simply
+never arrives.
+
+**Options**
+1. Leave it: the mitigation is "run the worker again" — rejected, nothing re-enqueues the
+   job, so running again does not help
+2. Remove `claim_timeout_seconds` from config, since nothing used it — rejected, that
+   resolves the inconsistency by deleting the correct half
+3. Implement reclaim, and add liveness assertions alongside the safety ones
+
+**Resolution**
+Option 3. `claim_jobs` now also selects rows in `claimed` whose `claimed_at` is older than
+the configured timeout, and fails a job that has exceeded `max_attempts_per_job` rather than
+reclaiming it forever — a job that kills every worker it touches should stop visibly, not
+loop.
+
+Two tests were added that assert something *happens*: a crashed job is reclaimed and
+produces its decision, and a poison job ends in `failed` rather than cycling.
+
+**Why it mattered**
+The bug is small. What it exposed is not: the entire C7 suite was built to prove a safety
+property, and a safety property cannot fail when the system does nothing. I had been
+reading a clean run as "the event core is correct" when it only ever meant "the event core
+is not unsafe".
+
+Those are different claims and the second is much weaker. It also inverts the usual
+intuition about which failures are dangerous — a duplicate charge is loud, a customer
+complains, someone investigates. A dropped recovery is silent, indistinguishable from a
+failure that was never recoverable, and shows up only as slightly worse aggregate numbers
+that nobody can attribute to anything.
+
+Worth stating to the panel as the reason both kinds of property are in the suite, rather
+than presenting the safety search alone and letting them find the gap.
+
+---
+
+## 010 — The tool built to keep me honest was overstating its own sample size
+
+**Date:** Phase 2
+**Tags:** `#evaluation` `#safety`
+
+**Problem**
+The C7 search takes a budget of sequences, runs them, and returns a report whose whole
+purpose is to make one claim quantifiable: *this many adversarial orderings were explored
+without finding a violation.* The number is the claim; without it "I could not break it"
+means nothing.
+
+The search stops at the first violation — there is no point continuing once the invariant
+is broken. And the report was constructed like this:
+
+    return SearchReport(
+        sequences_explored=sequences if not violations else sequences,
+        ...
+    )
+
+Both branches return the budget. A search that stopped at sequence 5 of 5,000 reported
+5,000 explored.
+
+**Diagnosis**
+The conditional expression is the tell: someone — me — wrote it intending to distinguish
+the two cases, and then put the same value in both branches. It reads as though a decision
+was made. Nothing flagged it, because on a clean run the budget and the count are equal,
+and every run had been clean.
+
+That is the uncomfortable part. The bug was invisible in exactly the situation the tool is
+used in, and would only have surfaced the first time the search actually found something —
+which is the moment its output matters most and gets read most carefully.
+
+**Options**
+1. Report the budget and note that it stops early — rejected, that is the bug with a
+   comment on it
+2. Do not stop early, so budget and count always agree — rejected, it wastes minutes
+   re-confirming a known failure, and the first violation is the one that gets debugged
+3. Count what actually ran
+
+**Resolution**
+Option 3, plus a test that plants a bug and asserts the reported count is *lower* than the
+budget. The count is now incremented per executed scenario, and the early stop carries a
+comment saying why the distinction matters.
+
+**Why it mattered**
+The project's entire argument is about not overstating what the evidence supports —
+ordinal rather than cardinal claims, dominance orderings instead of counts, LTV as a
+sensitivity rather than a point estimate. The one piece of tooling built specifically to
+quantify a claim honestly was inflating its own denominator.
+
+The narrow lesson: a measurement whose two branches return the same value is not a
+measurement. The broader one is that discipline applied to results does not automatically
+extend to the instruments producing them, and instruments are held to a lower standard
+precisely because they feel like plumbing rather than findings.
+
+Every number this repo reports now comes from something that counts what happened rather
+than what was requested. That is a small change and I would rather have found it myself
+than have a panel ask what the number meant.
+
+---
+
+## 011 — _(next entry)_
 
 **Date:**
 **Tags:**

@@ -159,6 +159,35 @@ within-a-window? A customer who receives three failures in three days plausibly
 reacts differently from one who receives three across three months, and the
 current model does not distinguish them.
 
+### C8 found this parameter to be the result's breaking point
+
+The robustness sweep (300 sampled worlds, nominal and stress range sets) searched
+every swept parameter for the condition that best separates worlds where Arm C
+wins from worlds where it loses. **This parameter is the answer, by a wide
+margin.**
+
+| Range set | Condition | Loss rate inside | Loss rate outside |
+|---|---|---|---|
+| Nominal, vs A | below ~0.0136 | 30% of 30 worlds | 7% of 270 |
+| Stress, vs A | below ~0.0102 | 47% of 30 worlds | 4% of 270 |
+| Stress, vs B | below ~0.0102 | 60% of 30 worlds | 2% of 270 |
+
+The mechanism is not subtle, which is why it is worth stating rather than
+burying: if repeated failure notifications cost few mandates, then protecting
+mandates buys little, and an arm that contacts everyone and spends its whole
+attempt budget simply collects more money. Arm C's conservatism is only
+justified if the hazard is real.
+
+**So the result depends most heavily on the number the project can defend
+least.** That is the first thing a panel should attack, and it should be
+volunteered rather than discovered.
+
+Two conditions that were *expected* to break it and did not appear as dominant
+splits: high TERMINAL link conversion, and time-independent liquidity recovery
+(swept down to `per_day = 0.0` under stress). Both were plausible and neither
+separated wins from losses as strongly as the hazard. Worth recording, because
+predicting a breaking point and then not finding it is evidence too.
+
 ### What would change if this is wrong
 
 Nothing that is reported, unless it is wrong by enough to invert the ordering —

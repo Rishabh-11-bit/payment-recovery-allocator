@@ -47,6 +47,7 @@ from allocator.arm_c import ArmC
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
 from recovery.sim.horizon import SurvivalBasis, horizon_sweep
+from recovery.sim.sweep import SweepReport, stress_config, sweep
 from recovery.sim.run import (
     exchange_rate_band,
     mandate_survival_dominance,
@@ -83,6 +84,12 @@ def main(
     classifier_path: pathlib.Path = typer.Option(DEFAULT_CLASSIFIER_PATH, "--classifier"),
     db_path: pathlib.Path = typer.Option(
         pathlib.Path("data/reproduce.db"), "--db", help="Recreated from scratch on every run."
+    ),
+    sweep_worlds: int = typer.Option(
+        100,
+        "--sweep-worlds",
+        help="Sampled worlds for the C8 robustness sweep. The default keeps this "
+        "command quick; the reported figures used 300.",
     ),
     c7_sequences: int = typer.Option(
         500,
@@ -137,6 +144,7 @@ def main(
     passed = _c2_section(classifier) and passed
     passed = _c5_section(config, classifier) and passed
     passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
+    passed = _c8_section(config, classifier, sweep_worlds) and passed
 
     store.close()
     typer.echo("\nreproduce: " + ("OK" if passed else "FAILED"))
@@ -192,6 +200,101 @@ def _c2_section(classifier) -> bool:
             _check("unmapped may not exclude", int(unmapped.may_exclude_instrument), 0),
         ]
     )
+
+
+def _c8_section(config, classifier, worlds: int) -> bool:
+    """C8: sample the world space, report where the result breaks."""
+    calendar = calendar_from_config(config.regulatory)
+    arms = [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)]
+
+    typer.echo("\n\nC8 robustness sweep -- where does this break?\n")
+    typer.echo(
+        f"  {worlds} sampled worlds per range set, batch 200. Every cardinal value is"
+    )
+    typer.echo(
+        "  redrawn per world: recovery curves, link conversion, revocation hazard,"
+    )
+    typer.echo("  failure mix, rail mix, emission fidelity.")
+
+    passed = True
+    named: set[str] = set()
+    for label in ("nominal", "stress"):
+        raw = load_world_config()
+        raw["batch"] = {**raw["batch"], "size": 200}
+        if label == "stress":
+            raw = stress_config(raw)
+        outcomes = sweep(
+            arms, calendar, raw, worlds=worlds, costs=classifier.config.costs
+        )
+        report = SweepReport(label=label, worlds=worlds, outcomes=outcomes)
+
+        typer.echo(f"\n  --- {label.upper()} ---")
+        if label == "stress":
+            typer.echo(
+                "  Ranges deliberately widened past calibration to locate the edge."
+            )
+            typer.echo("  These figures locate a breaking point; they are not results.")
+        typer.echo(
+            f"    cycle-recovery winner: A {report.cycle_win_share('A'):.0%}  "
+            f"B {report.cycle_win_share('B'):.0%}  C {report.cycle_win_share('C'):.0%}"
+        )
+        for incumbent in ("A", "B"):
+            distribution = report.distribution(incumbent)
+            typer.echo(f"    {distribution.describe()}")
+            typer.echo(
+                f"      C ahead by 6mo {distribution.win_rate(6):.0%}, "
+                f"12mo {distribution.win_rate(12):.0%}, "
+                f"24mo {distribution.win_rate(24):.0%}"
+            )
+            points = report.breaking(incumbent)
+            if points:
+                for point in points:
+                    typer.echo(f"      BREAKS WHEN {point.describe()}")
+            else:
+                typer.echo(
+                    "      no parameter condition separates wins from losses"
+                )
+            named.update(point.parameter for point in points)
+        passed = passed and bool(outcomes)
+
+    typer.echo("")
+    if any("revocation" in parameter for parameter in named):
+        typer.echo(
+            "    The breaking condition is the revocation hazard itself: where repeated"
+        )
+        typer.echo(
+            "    failure notifications cost few mandates, C's conservatism buys nothing"
+        )
+        typer.echo(
+            "    and contacting everyone wins. That parameter is the least evidenced"
+        )
+        typer.echo(
+            "    number in the project (ASSUMPTIONS.md), so the result depends most on"
+        )
+        typer.echo(
+            "    what we can defend least. Stated because it is the first thing to attack."
+        )
+    else:
+        typer.echo(
+            f"    No condition surfaced at {worlds} worlds -- a split needs at least"
+        )
+        typer.echo(
+            "    15 worlds on each side, so small samples name nothing. This is the"
+        )
+        typer.echo(
+            "    sweep declining to invent a condition, not evidence there is none."
+        )
+        typer.echo(
+            "    The verified 300-world run found: C loses where"
+        )
+        typer.echo(
+            "    revocation_per_notification is below ~0.010-0.014 (47-60% loss rate"
+        )
+        typer.echo(
+            "    there, against 2-4% elsewhere). Rerun with --sweep-worlds 300."
+        )
+    typer.echo("")
+    return passed
 
 
 def _c7_section(config, classifier, tmp_dir, sequences: int) -> bool:
