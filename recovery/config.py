@@ -79,6 +79,21 @@ class AllocatorConfig(_Strict):
         return value
 
 
+class GuardConfig(_Strict):
+    contact_budget_per_case: Annotated[int, Field(ge=0)]
+    contact_cooldown_hours: Annotated[int, Field(ge=0)]
+    order_validity_days: Annotated[int, Field(gt=0)]
+    execution_counter: str
+
+    @field_validator("execution_counter")
+    @classmethod
+    def _known(cls, value: str) -> str:
+        allowed = {"system_initiated", "discount_customer_attempts"}
+        if value not in allowed:
+            raise ValueError(f"execution_counter must be one of {sorted(allowed)}")
+        return value
+
+
 class RegulatoryConfig(_Strict):
     """Consumed by C4. Recorded from day one so the NPCI constants live in config."""
 
@@ -100,6 +115,7 @@ class RegulatoryConfig(_Strict):
 class Config(_Strict):
     policy: PolicyConfig
     allocator: AllocatorConfig
+    guard: GuardConfig
     database: DatabaseConfig
     ingest: IngestConfig
     worker: WorkerConfig

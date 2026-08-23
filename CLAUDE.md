@@ -313,10 +313,19 @@ Actions: `SCHEDULE_AT(t)`, `RECOVERY_LINK`, `OFFER_RAIL_MIGRATION`, `REORDER_RAI
 `OFFER_RAIL_MIGRATION` is mandate-level and customer-mediated; `REORDER_RAILS` and
 `EXCLUDE_INSTRUMENT` are link-level and system-executed. See the rail-migration section.
 
-**Guard**: attempt cap, non-peak window check, PDN lead-time check, cooldown, contact budget,
-risk block, order validity, payment-not-already-succeeded, idempotency key
-`recovery:{payment_id}:{policy_version}:{attempt_n}`, storm governor (jitter + per-issuer
-admission ceiling).
+**Guard** (C4, `recovery/guard.py`): admission control between Allocate and Execute. Every
+proposal passes through. Checks: mandate-execution cap (using the CHALLENGES 008 counter),
+non-peak window, PDN lead time with the 23:50 cutoff, prior-attempt-resolved (Emandate),
+contact budget, contact cooldown, order validity and expiry,
+payment-not-already-succeeded, idempotency key
+`recovery:{payment_id}:{policy_version}:{attempt_n}`. Storm governor (jitter + per-issuer
+admission ceiling) is C11 and not yet built.
+
+The guard is deliberately separate from the allocator: an allocator that polices itself
+cannot be audited against its own rules, and every arm must face identical admission rules
+or the comparison measures which arm remembered the regulations. **Every block carries a
+reason, is audited, and is attributable per arm** — so "wanted to and could not" stays
+distinguishable from "chose not to".
 
 **Execute**: adapter pattern. `SimulatorExecutor` primary; `RazorpayExecutor` demonstrated only.
 

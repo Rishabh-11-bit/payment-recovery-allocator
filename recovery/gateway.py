@@ -47,6 +47,7 @@ def _snapshot_from_entity(entity: dict[str, Any]) -> PaymentSnapshot:
         error_source=entity.get("error_source"),
         error_step=entity.get("error_step"),
         error_reason=entity.get("error_reason"),
+        order_expires_at=entity.get("order_expires_at"),
         fetched_at=datetime.now(timezone.utc),
     )
 

@@ -65,6 +65,26 @@ allocator:
     attention_channel: whatsapp
     max_per_case: 1
 
+# --- Guard (C4) -------------------------------------------------------------
+# Admission control between Allocate and Execute. Every limit lives here.
+guard:
+  # A contact costs no mandate execution but is not free: every customer-visible
+  # message carries mandate-survival cost. This is the guard's ceiling, sitting
+  # above whatever the allocator chooses to spend.
+  contact_budget_per_case: 2
+  # Three failure notices in three days is how a mandate gets cancelled from a
+  # UPI app. The cooldown is the floor under that.
+  contact_cooldown_hours: 24
+  # Fallback when the order entity carries no explicit expiry. Order validity is
+  # merchant- and link-configured rather than a documented platform constant, so
+  # this is a configured assumption, not a claim about Razorpay's defaults.
+  order_validity_days: 15
+  # What the attempt cap counts. See CHALLENGES 008.
+  #   system_initiated            -- attempts_seen already excludes customer taps
+  #   discount_customer_attempts  -- attempts_seen came from order.attempts and
+  #                                  is conflated; subtract our own contacts
+  execution_counter: system_initiated
+
 # Consumed by C4 (guard). Recorded here from day one so the NPCI constants live
 # in config rather than in code. NOT read by C1.
 regulatory:

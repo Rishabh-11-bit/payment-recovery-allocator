@@ -320,9 +320,18 @@ def _c7_section(config, classifier, tmp_dir, sequences: int) -> bool:
     )
     typer.echo("    and a PDN window shift.")
     typer.echo("")
-    typer.echo("    NOT YET ENFORCED (generated, but no check consumes them):")
-    for hazard in UNGUARDED_HAZARDS:
-        typer.echo(f"      - {hazard}")
+    if UNGUARDED_HAZARDS:
+        typer.echo("    NOT YET ENFORCED (generated, but no check consumes them):")
+        for hazard in UNGUARDED_HAZARDS:
+            typer.echo(f"      - {hazard}")
+    else:
+        typer.echo(
+            "    Every generated hazard is enforced. Order expiry and PDN-window shift"
+        )
+        typer.echo(
+            "    were generated but unguarded until C4; they are now blocked at the"
+        )
+        typer.echo("    admission point and the sequences exercise a real block.")
     typer.echo("")
     typer.echo(
         "    A clean run is worth only the size of the search, and only if the search can"
@@ -442,6 +451,21 @@ def _c5_section(config, classifier) -> bool:
         f"B {metrics_b.wasted_attempt_share:.0%}, "
         f"C {metrics_c.wasted_attempt_share:.0%}"
     )
+
+    # What each arm tried, versus what the guard allowed. A block is never
+    # silently swallowed, so "wanted to and could not" stays distinguishable
+    # from "chose not to".
+    typer.echo("\n    proposals blocked by the guard, per arm:")
+    for name in ("A", "B", "C"):
+        metrics = result.metrics[name]
+        summary = (
+            ", ".join(
+                f"{reason} x{count}"
+                for reason, count in sorted(metrics.rejection_reasons.items())
+            )
+            or "nothing blocked"
+        )
+        typer.echo(f"      {name}: {metrics.proposals_rejected:>4} blocked   {summary}")
 
     arm_c = ArmC(calendar, classifier, config)
     coverage = _coverage(arm_c, world)

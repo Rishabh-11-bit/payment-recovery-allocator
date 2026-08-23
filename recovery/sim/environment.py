@@ -25,7 +25,8 @@ import random
 from dataclasses import dataclass, field
 
 from recovery.classifier import CostModel
-from recovery.models import FailureClass
+from recovery.guard import Guard, GuardRequest, ProposalKind
+from recovery.models import FailureClass, PaymentStatus
 from recovery.sim.batch import SyntheticFailure
 from recovery.sim.calendar import IST, ComplianceCalendar
 from recovery.sim.metrics import ArmMetrics
@@ -104,6 +105,8 @@ class _CaseState:
     outcome: CaseOutcome = CaseOutcome.OPEN
     attempt_pending_until: dt.datetime | None = None
     last_attempt_resolved_at: dt.datetime | None = None
+    last_contact_at: dt.datetime | None = None
+    order_expires_at: dt.datetime | None = None
     resolved_on_day: int | None = None
     history: list[str] = field(default_factory=list)
 
@@ -121,10 +124,15 @@ class Environment:
         costs: CostModel | None = None,
         *,
         seed_offset: int = 0,
+        guard: Guard | None = None,
     ) -> None:
         self.world = world
         self.calendar = calendar
         self.costs = costs
+        # Admission control is C4's, not the environment's. The environment
+        # resolves outcomes; the guard decides what is permitted to happen, and
+        # every arm faces the same instance.
+        self.guard = guard or Guard(calendar)
         # Per-arm RNG derived from the world seed: every arm gets the same draws
         # for the same case, so arms differ by policy and not by luck.
         self._rng = random.Random(world.seed * 104729 + seed_offset)
@@ -173,6 +181,26 @@ class Environment:
             return self._submit_attempt(state, proposal, decided_at, metrics)
         return self._submit_contact(state, proposal, decided_at, metrics)
 
+    def _guard_request(
+        self, state: _CaseState, proposal: Proposal, decided_at: dt.datetime
+    ) -> GuardRequest:
+        return GuardRequest(
+            kind=(
+                ProposalKind.EXECUTION
+                if proposal.kind is ActionKind.ATTEMPT
+                else ProposalKind.CONTACT
+            ),
+            decided_at=decided_at,
+            execute_at=proposal.execute_at,
+            attempts_seen=state.attempts_used,
+            contacts_seen=state.contacts_used,
+            last_contact_at=state.last_contact_at,
+            attempt_pending_until=state.attempt_pending_until,
+            payment_status=PaymentStatus.FAILED,
+            order_id=state.failure.order_id,
+            order_expires_at=state.order_expires_at,
+        )
+
     def _submit_attempt(
         self,
         state: _CaseState,
@@ -180,22 +208,10 @@ class Environment:
         decided_at: dt.datetime,
         metrics: ArmMetrics,
     ) -> bool:
-        # Emandate is asynchronous: no new attempt until the previous one has
-        # been confirmed or rejected.
-        if (
-            state.attempt_pending_until is not None
-            and proposal.execute_at < state.attempt_pending_until
-        ):
-            metrics.record_rejection("prior_attempt_unresolved")
-            return False
-
-        violation = self.calendar.check_attempt(
-            decided_at=decided_at,
-            execute_at=proposal.execute_at,
-            attempts_used=state.attempts_used,
-        )
-        if violation is not None:
-            metrics.record_rejection(str(violation))
+        verdict = self.guard.check(self._guard_request(state, proposal, decided_at))
+        if verdict.blocked:
+            # Never silently swallowed: attributed by reason, per arm.
+            metrics.record_rejection(str(verdict))
             return False
 
         state.attempts_used += 1
@@ -232,10 +248,12 @@ class Environment:
         decided_at: dt.datetime,
         metrics: ArmMetrics,
     ) -> bool:
-        if proposal.execute_at <= decided_at:
-            metrics.record_rejection("execute_at_not_in_future")
+        verdict = self.guard.check(self._guard_request(state, proposal, decided_at))
+        if verdict.blocked:
+            metrics.record_rejection(str(verdict))
             return False
 
+        state.last_contact_at = proposal.execute_at
         cost = (
             self.costs.contact_cost(state.failure.true_class) if self.costs is not None else 0.0
         )

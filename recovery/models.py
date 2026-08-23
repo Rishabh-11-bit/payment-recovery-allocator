@@ -113,6 +113,8 @@ class AuditEventType(str, enum.Enum):
     FAILURE_UNMAPPED = "failure.unmapped"
     FAILURE_SOURCE_UNDOCUMENTED = "failure.source_undocumented"
     CLASSIFICATION_COST_RESOLVED = "failure.cost_resolved"
+    GUARD_BLOCKED = "guard.blocked"
+    GUARD_ALLOWED = "guard.allowed"
 
 
 # --------------------------------------------------------------------------- #
@@ -173,6 +175,9 @@ class PaymentSnapshot(_Permissive):
     error_source: str | None = None
     error_step: str | None = None
     error_reason: str | None = None
+    # Present when the order entity carries an expiry. The guard treats its
+    # absence as "unknown", never as "does not expire".
+    order_expires_at: datetime | None = None
     fetched_at: datetime
 
 

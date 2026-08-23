@@ -330,7 +330,72 @@ def test_random_scenarios_are_varied():
     assert len(shapes) > 150
 
 
-def test_unguarded_hazards_are_named():
-    """A clean run must not be readable as "everything is enforced"."""
-    assert UNGUARDED_HAZARDS
-    assert any("C4" in hazard for hazard in UNGUARDED_HAZARDS)
+def test_no_hazard_is_left_unguarded():
+    """Order expiry and PDN shift were generated but unenforced until C4."""
+    assert UNGUARDED_HAZARDS == ()
+
+
+# --------------------------------------------------------------------------- #
+# C4 hazards -- generated from the start, enforced since the guard landed
+# --------------------------------------------------------------------------- #
+
+
+def test_generated_sequences_actually_exercise_the_guard(config, classifier, tmp_path):
+    """A hazard that never fires a block is a hazard in name only."""
+    import collections
+    import random
+
+    from recovery.invariants import execute, random_scenario
+
+    rng = random.Random(11)
+    reasons: collections.Counter = collections.Counter()
+    admitted = 0
+    for index in range(120):
+        scenario = random_scenario(rng)
+        store, trace = execute(
+            scenario, config, classifier, f"file:t7_{index}?mode=memory&cache=shared"
+        )
+        reasons.update(trace.blocks)
+        admitted += len(trace.admitted)
+        store.close()
+
+    assert admitted, "no execution was ever admitted -- the invariants are vacuous"
+    assert "order_expired" in reasons, "order expiry never blocked anything"
+    assert "pdn_lead_time_unmet" in reasons, "the PDN window never blocked anything"
+    assert "peak_hour_barred" in reasons
+
+
+def test_search_finds_an_obligation_admitted_after_order_expiry(
+    config, classifier, tmp_path, monkeypatch
+):
+    """Mutation control for the order check."""
+    from recovery.guard import ALLOWED, Guard
+
+    monkeypatch.setattr(Guard, "_order", lambda self, request: ALLOWED)
+    report = search(config, classifier, tmp_path, sequences=400)
+
+    assert not report.clean, "expired-order admission went undetected"
+    assert any(
+        v.name == "obligation_admitted_after_order_expiry" for v in report.violations
+    ), [v.name for v in report.violations]
+
+
+def test_search_finds_an_execution_admitted_in_a_barred_window(
+    config, classifier, tmp_path, monkeypatch
+):
+    """Mutation control for the timing checks."""
+    from recovery.guard import ALLOWED, Guard
+
+    monkeypatch.setattr(Guard, "_execution", lambda self, request: ALLOWED)
+    report = search(config, classifier, tmp_path, sequences=400)
+
+    assert not report.clean, "peak-window admission went undetected"
+    assert any(
+        v.name
+        in {
+            "obligation_admitted_in_peak_window",
+            "admitted_executions_exceed_cap",
+            "obligation_admitted_after_late_authorisation",
+        }
+        for v in report.violations
+    ), [v.name for v in report.violations]

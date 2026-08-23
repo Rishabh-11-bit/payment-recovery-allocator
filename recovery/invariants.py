@@ -31,16 +31,17 @@ late `authorized` for the same payment inside the 3-day polling window, a worker
 crashing between claiming a job and finishing it, two workers on one case, order
 expiry mid-recovery, and a PDN window shifting under a scheduled attempt.
 
-## Coverage honesty
+## Coverage
 
-Not every generated hazard is guarded yet, and the report says which. Order
-expiry and PDN-window shift are C4's checks; they are generated now so the
-sequences exist and so the invariant is tested against them, but a clean run
-does not mean those two are *enforced*. `SearchReport.unguarded` names them.
+Every generated hazard is now enforced. Order expiry and PDN-window shift were
+generated but unguarded until C4 landed; they are now checked at the admission
+point, and the sequences exercise a real block rather than passing through a
+gap. `SearchReport.unguarded` is empty and the reporting says so.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import enum
 import pathlib
 import random
@@ -49,18 +50,19 @@ from typing import Sequence
 
 from recovery.classifier import Classifier
 from recovery.config import Config
+from recovery.guard import Guard, GuardRequest, ProposalKind, guard_from_config
+from recovery.models import PaymentStatus
+from recovery.sim.calendar import IST, calendar_from_config
 from recovery.fixtures import build_delivery
 from recovery.gateway import SimulatedGateway
 from recovery.ingest import ingest_delivery
 from recovery.store import Store
 from recovery.worker import process_pending
 
-# Generated but not yet enforced anywhere. Named so a clean run cannot be read
-# as "these are handled".
-UNGUARDED_HAZARDS = (
-    "order_expiry (C4: order validity check)",
-    "pdn_window_shift (C4: PDN lead-time check)",
-)
+# Empty since C4. Kept as a named constant rather than deleted: a future hazard
+# added to the generator before its check exists belongs here, and a clean run
+# must never be readable as "everything is enforced" without something to check.
+UNGUARDED_HAZARDS: tuple[str, ...] = ()
 
 
 class Step(str, enum.Enum):
@@ -108,6 +110,10 @@ class _Trace:
     """What happened, for checking invariants that span the whole sequence."""
 
     resolved_at_step: dict[str, int] = field(default_factory=dict)
+    order_expired: bool = False
+    # Executions the guard admitted: (step, payment_id, execute_at).
+    admitted: list[tuple[int, str, "dt.datetime"]] = field(default_factory=list)
+    blocks: list[str] = field(default_factory=list)
     decisions_at_step: list[tuple[int, str, str]] = field(default_factory=list)
     _seen_keys: set[str] = field(default_factory=set)
     delivered_event_ids: set[str] = field(default_factory=set)
@@ -124,8 +130,16 @@ def execute(
     store = Store(db_path)
     store.initialise()
     gateway = SimulatedGateway()
+    calendar = calendar_from_config(config.regulatory)
+    guard = guard_from_config(config, calendar)
     trace = _Trace()
     event_counter = 0
+
+    # A compliant baseline for scheduled executions. SHIFT_PDN_WINDOW moves it
+    # until it stops being compliant, which is the point of the hazard.
+    clock = dt.datetime(2026, 3, 2, 1, 0, tzinfo=IST)
+    pdn_shift_hours = 0
+    order_expires_at: dt.datetime | None = None
 
     for index in range(scenario.payment_count):
         gateway.set_state(
@@ -193,11 +207,53 @@ def execute(
                 other.close()
 
         elif action.step is Step.EXPIRE_ORDER:
+            # The order stops being able to carry a new obligation. The guard
+            # reads this; before C4 nothing did.
             trace.order_expired_at_step = step_number
+            trace.order_expired = True
+            order_expires_at = clock - dt.timedelta(hours=1)
 
         elif action.step is Step.SHIFT_PDN_WINDOW:
-            # Generated so the ordering exists. Nothing consumes it until C4.
-            pass
+            # The scheduled execution slides toward the decision moment until
+            # the 24h pre-debit notification lead time can no longer be met.
+            pdn_shift_hours += 9
+
+        # --- Admission. Every scheduled execution passes the guard. ---------
+        if action.step in (Step.RUN_WORKER, Step.CONCURRENT_WORKERS):
+            for case_row in store._conn.execute(
+                "SELECT case_id, payment_id FROM cases"
+            ).fetchall():
+                admitted_for_case = [
+                    entry for entry in trace.admitted if entry[1] == case_row["payment_id"]
+                ]
+                # The slot is spread across payments so some land in a barred
+                # peak window naturally. The PDN hazard moves the *decision*
+                # later instead of moving the slot, so the two hazards stay
+                # separable -- otherwise a shifted slot lands in peak and the
+                # peak check masks the PDN one, which is what happened first.
+                execute_at = clock + dt.timedelta(hours=26 + 8 * index)
+                decided_at = clock + dt.timedelta(hours=pdn_shift_hours)
+                request = GuardRequest(
+                    kind=ProposalKind.EXECUTION,
+                    decided_at=decided_at,
+                    execute_at=execute_at,
+                    attempts_seen=1 + len(admitted_for_case),
+                    contacts_seen=0,
+                    payment_status=(
+                        PaymentStatus.AUTHORIZED
+                        if case_row["payment_id"] in trace.resolved_at_step
+                        else PaymentStatus.FAILED
+                    ),
+                    order_id=scenario.order_id,
+                    order_expires_at=order_expires_at,
+                )
+                verdict = guard.check(request)
+                if verdict.allowed:
+                    trace.admitted.append(
+                        (step_number, case_row["payment_id"], execute_at)
+                    )
+                else:
+                    trace.blocks.append(verdict.reason.value)
 
         # Record newly-appeared decisions with the step that produced them.
         # Set membership rather than a list scan: this runs once per action of
@@ -303,6 +359,69 @@ def check(scenario: Scenario, store: Store, trace: _Trace, config: Config) -> li
                 scenario,
             )
         )
+
+    # --- Order expiry (C4) -------------------------------------------------- #
+    # Once the order expires it cannot carry a new obligation. Generated as a
+    # hazard from the start; unenforced until the guard landed.
+    if trace.order_expired:
+        after = [
+            entry
+            for entry in trace.admitted
+            if entry[0] > (trace.order_expired_at_step or -1)
+        ]
+        if after:
+            violations.append(
+                Violation(
+                    "obligation_admitted_after_order_expiry",
+                    f"{len(after)} execution(s) admitted after the order expired",
+                    scenario,
+                )
+            )
+
+    # --- Compliance of admitted executions (C4) ----------------------------- #
+    calendar = calendar_from_config(config.regulatory)
+    for step_number, payment_id, execute_at in trace.admitted:
+        # The PDN lead time is checked at admission by the guard; this asserts
+        # the guard actually held, rather than trusting that it was called.
+        if calendar.is_peak(execute_at):
+            violations.append(
+                Violation(
+                    "obligation_admitted_in_peak_window",
+                    f"{payment_id} scheduled at "
+                    f"{execute_at.astimezone(IST):%H:%M} IST, inside a barred window",
+                    scenario,
+                )
+            )
+
+    # Admitted executions must never exceed the cap on any chain.
+    per_payment_admitted: dict[str, int] = {}
+    for _, payment_id, _ in trace.admitted:
+        per_payment_admitted[payment_id] = per_payment_admitted.get(payment_id, 0) + 1
+    for payment_id, count in per_payment_admitted.items():
+        # +1 for the original execution that opened the case.
+        if count + 1 > config.regulatory.attempt_cap:
+            violations.append(
+                Violation(
+                    "admitted_executions_exceed_cap",
+                    f"{payment_id}: {count + 1} executions against a cap of "
+                    f"{config.regulatory.attempt_cap}",
+                    scenario,
+                )
+            )
+
+    # An execution admitted against a payment that had already settled is the
+    # double-charge the whole invariant exists to prevent.
+    for step_number, payment_id, _ in trace.admitted:
+        resolved = trace.resolved_at_step.get(payment_id)
+        if resolved is not None and step_number > resolved:
+            violations.append(
+                Violation(
+                    "obligation_admitted_after_late_authorisation",
+                    f"{payment_id} settled at step {resolved}, execution admitted "
+                    f"at step {step_number}",
+                    scenario,
+                )
+            )
 
     # --- Auditability ------------------------------------------------------- #
     audited = conn.execute(

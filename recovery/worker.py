@@ -29,6 +29,7 @@ from typing import Protocol
 from recovery.classifier import Classifier
 from recovery.config import Config
 from recovery.gateway import PaymentGateway, StateRefreshError
+from recovery.guard import Guard, GuardRequest, ProposalKind
 from recovery.models import (
     AuditEventType,
     Case,
@@ -92,10 +93,22 @@ class WorkerStats:
     processed: int = 0
     decided: int = 0
     duplicates_suppressed: int = 0
+    guard_blocks: int = 0
     stale_ignored: int = 0
     closed_resolved: int = 0
     refresh_failures: int = 0
     unmapped_failures: int = 0
+
+
+# Actions that create a payment obligation, and therefore need admission.
+# HOLD and SURRENDER create none, so there is nothing for the guard to admit.
+OBLIGATION_KIND = {
+    DecisionAction.SCHEDULE_AT: ProposalKind.EXECUTION,
+    DecisionAction.RECOVERY_LINK: ProposalKind.CONTACT,
+    DecisionAction.OFFER_RAIL_MIGRATION: ProposalKind.CONTACT,
+    DecisionAction.REORDER_RAILS: ProposalKind.CONTACT,
+    DecisionAction.EXCLUDE_INSTRUMENT: ProposalKind.CONTACT,
+}
 
 
 def process_pending(
@@ -104,6 +117,7 @@ def process_pending(
     gateway: PaymentGateway,
     classifier: Classifier,
     decider: Decider | None = None,
+    guard: Guard | None = None,
 ) -> WorkerStats:
     """Drain the pending queue once. Returns what happened, for the reproduce run."""
     decider = decider or PendingAllocatorDecider()
@@ -123,7 +137,15 @@ def process_pending(
         )
         stats.processed += 1
         _process_one(
-            store, config, gateway, classifier, decider, envelope, row["job_id"], stats
+            store,
+            config,
+            gateway,
+            classifier,
+            decider,
+            envelope,
+            row["job_id"],
+            stats,
+            guard,
         )
 
     return stats
@@ -228,6 +250,7 @@ def _process_one(
     envelope: WebhookEnvelope,
     job_id: str,
     stats: WorkerStats,
+    guard: Guard | None = None,
 ) -> None:
     entity = envelope.payment_entity
     payment_id = entity.get("id")
@@ -323,6 +346,43 @@ def _process_one(
     )
     attempt_n = store.assign_attempt_n(chain_key, payment_id)
     action, reason = decider.decide(case, snapshot, classification, attempt_n)
+
+    # 6. Admission control. Only actions that create a payment obligation need
+    #    it -- HOLD and SURRENDER create none, so there is nothing to admit.
+    kind = OBLIGATION_KIND.get(action)
+    if guard is not None and kind is not None:
+        request = GuardRequest(
+            kind=kind,
+            decided_at=datetime.now(timezone.utc),
+            execute_at=None,
+            attempts_seen=attempt_n,
+            contacts_seen=0,
+            payment_status=snapshot.status,
+            order_id=snapshot.order_id,
+            order_expires_at=snapshot.order_expires_at,
+        )
+        verdict = guard.check(request)
+        if verdict.blocked:
+            stats.guard_blocks += 1
+            store.append_audit(
+                AuditEventType.GUARD_BLOCKED,
+                case_id=case.case_id,
+                event_id=envelope.event_id,
+                detail={
+                    "action": action.value,
+                    "reason": verdict.reason.value,
+                    "detail": verdict.detail,
+                },
+            )
+            store.finish_job(job_id, "done")
+            return
+        store.append_audit(
+            AuditEventType.GUARD_ALLOWED,
+            case_id=case.case_id,
+            event_id=envelope.event_id,
+            detail={"action": action.value, "kind": kind.value},
+        )
+
     decision = Decision(
         idempotency_key=idempotency_key(payment_id, config.policy.version, attempt_n),
         case_id=case.case_id,

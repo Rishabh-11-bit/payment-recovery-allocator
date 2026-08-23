@@ -3,7 +3,8 @@
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
 **Status:** Phase 2 — C1 event core, C2 classifier (taxonomy authored), C3 allocator,
-C5 simulator with all three arms, C7 property-based invariant tests. Cost values still stubbed.
+C4 guard, C5 simulator with all three arms, C7 property-based invariant tests, C8 robustness
+sweep. Cost values still stubbed.
 
 ---
 
@@ -146,6 +147,17 @@ number in the project, so **the result depends most on what can be defended leas
 See `ASSUMPTIONS.md`.
 
 Arm B wins cycle recovery in ~93% of worlds. Arm C's case is entirely the horizon.
+
+**C4 — the guard.** Admission control between Allocate and Execute; every proposal
+passes through. Mandate-execution cap, non-peak windows, PDN lead time with the 23:50
+cutoff, prior-attempt-resolved for Emandate, contact budget and cooldown, order validity
+and expiry, payment-not-already-succeeded, idempotency.
+
+Separate from the allocator on purpose: an allocator that polices itself cannot be
+audited against its own rules, and every arm must face identical admission rules or the
+comparison measures which arm remembered the regulations. **Every block carries a
+reason and is attributable per arm**, so what an arm *tried* stays visible next to what
+it was *allowed* to do.
 
 Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
 at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and
