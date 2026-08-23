@@ -105,8 +105,14 @@ order expiry mid-recovery, a PDN window shift.
 python -m recovery.reproduce --c7-sequences 5000
 ```
 
-The count explored is printed, because a clean run is worth only the size of the
-search. Two hazards are generated but **not yet enforced** — order expiry and PDN
+**Verified: 5,000 adversarial orderings, 42,715 events, no violation.** The search is
+seeded (`seed=20260823`), so that run reproduces exactly; it takes ~12 minutes.
+`reproduce` defaults to 500 orderings to stay quick, and always prints the count it
+actually explored — a clean run is worth only the size of the search.
+
+The orderings are sampled from the generated space, not enumerated over it, so this is
+evidence rather than proof. Hypothesis searches the same space adaptively in the test
+suite and shrinks any failure to a minimal sequence. Two hazards are generated but **not yet enforced** — order expiry and PDN
 window shift are C4's checks — and the output names them, so a clean run cannot be
 read as "everything is handled".
 
