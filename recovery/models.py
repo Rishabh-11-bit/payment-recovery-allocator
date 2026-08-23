@@ -240,6 +240,11 @@ class Classification(_Model):
     # `international_transaction_not_allowed` is TERMINAL for a merchant
     # configuration reason and nothing the customer does will help.
     cause_family: str | None = None
+    # The rule that matched declared its own confidence below the moderate
+    # threshold on purpose. Distinguishes "we looked at this key and concluded
+    # we cannot tell" from "no rule covers this key" -- both land in the LOW
+    # row, and only one of them is a decision.
+    deliberately_low_confidence: bool = False
 
     @property
     def may_exclude_instrument(self) -> bool:

@@ -57,6 +57,9 @@ class Rule:
     # Optional sub-classification. Two failures can share a class and still need
     # different actions -- see Classification.cause_family.
     cause_family: str | None = None
+    # Declared low on purpose. Validated at load: a rule claiming this while
+    # sitting above the moderate threshold is a contradiction, not a nuance.
+    deliberately_low_confidence: bool = False
 
     @property
     def specificity(self) -> int:
@@ -196,6 +199,7 @@ class Classifier:
             "note": rule.note,
             "source_undocumented": undocumented,
             "cause_family": rule.cause_family,
+            "deliberately_low_confidence": rule.deliberately_low_confidence,
         }
         if band is ConfidenceBand.LOW:
             return Classification(
@@ -271,10 +275,22 @@ def _parse_rules(raw: Any) -> tuple[Rule, ...]:
                 confidence=confidence,
                 note=item.get("note"),
                 cause_family=cause_family,
+                deliberately_low_confidence=bool(item.get("deliberately_low_confidence")),
             )
         )
     _reject_ambiguous(rules)
     return tuple(rules)
+
+
+def _reject_contradictory_low_confidence(rules: tuple[Rule, ...], moderate: float) -> None:
+    """A rule cannot claim deliberate low confidence while banding above LOW."""
+    for rule in rules:
+        if rule.deliberately_low_confidence and rule.confidence >= moderate:
+            raise ClassifierConfigError(
+                f"rule {rule.index} sets deliberately_low_confidence but its confidence "
+                f"{rule.confidence} is at or above the moderate threshold {moderate}. "
+                "Lower the confidence or drop the flag."
+            )
 
 
 def _reject_ambiguous(rules: list[Rule]) -> None:
@@ -405,4 +421,5 @@ def load_classifier(
         costs=_parse_costs(raw.get("costs")),
         rules=_parse_rules(raw.get("rules") or []),
     )
+    _reject_contradictory_low_confidence(config.rules, config.moderate_threshold)
     return Classifier(config)

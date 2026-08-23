@@ -47,8 +47,22 @@ Consequences for the allocator:
 - `SURRENDER` is not "give up on this money." It is **"protect the annuity"** — a positive
   action with a defensible value. This is what makes the stopping rules productive rather than
   merely defensive.
-- `halted` is the state we are actually avoiding — halted subscriptions need manual
-  intervention to recover.
+- **`halted` and `revoked` are two exit doors with different costs, not two failures.**
+  Halted *preserves mandate authority*: the merchant can charge manually, and a card
+  update reactivates the subscription with no customer re-authorisation. Revoked
+  *destroys* it — recovery needs full re-registration, a fresh PDN, fresh AFA, and the
+  customer opening their UPI app. Razorpay's own ~30% pre-registration drop-off is the
+  price of that path.
+
+  So halting is the cheaper failure, and **moving cases from revoked to halted is a
+  real gain**, not a metric being shuffled.
+
+  State the exchange rate honestly whenever this is claimed. The allocator buys each
+  avoided revocation with roughly **1.5 additional halts** against the documented
+  baseline (more against Arm B). Whether that is a good trade depends on the rate at
+  which halted subscriptions are actually recovered manually, which is not published.
+  The rate is reported per arm pair by `recovery.sim.run.exchange_rate_band`, swept
+  across the hazard range — visible rather than asserted.
 - Escalation threshold is principled: escalate when mandate risk outweighs recovery value,
   not at an arbitrary attempt count.
 

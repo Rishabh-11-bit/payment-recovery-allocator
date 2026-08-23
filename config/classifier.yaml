@@ -157,4 +157,88 @@ rules:
     class: LIQUIDITY
     confidence: 0.30
     cause_family: generic_decline
+    deliberately_low_confidence: true
     note: "Generic decline. No information in the payload; do not pretend otherwise."
+
+# --- Deliberately low-confidence rows ---------------------------------------
+# "No row" and "a row that says this key is genuinely ambiguous" are different
+# states, and only the second one is a decision. These six keys are common and
+# structurally ambiguous: the payload names a proximate cause that is consistent
+# with more than one underlying class, and no amount of reading the payload
+# resolves it.
+#
+# They classify to their most plausible class at a confidence below the moderate
+# threshold, so they land in the allocator's LOW row **by design**. Behaviourally
+# that is the same as being unmapped -- one recovery link, no execution spent --
+# but the record differs: `mapped=True`, a rule index, the intended class visible
+# in `cost_resolved_from`, and this flag. An auditor can tell "we considered this
+# and concluded we cannot tell" from "we never looked".
+#
+# Each note names the ambiguity in domain terms. The simulator's mixed ground
+# truth corroborates these; it is not the reason for them. Writing rows from the
+# generator's own percentages would make any measured accuracy circular.
+
+  - match: {method: upi, source: beneficiary_bank, step: payment_debit_response, reason: mandate_revoked}
+    class: TERMINAL
+    confidence: 0.45
+    cause_family: mandate_state_unclear
+    deliberately_low_confidence: true
+    note: >-
+      A revocation reported by the beneficiary bank may be a real customer
+      revocation, or the bank surfacing its own mandate-state error under the
+      same reason code. TERMINAL is the safer reading, but not a confident one.
+
+  - match: {method: emandate, source: bank, step: payment_debit_response, reason: mandate_revoked}
+    class: TERMINAL
+    confidence: 0.45
+    cause_family: mandate_state_unclear
+    deliberately_low_confidence: true
+    note: >-
+      Same ambiguity as the UPI case. Emandate registration state is asynchronous
+      and lags, so a revocation report can reflect a stale mandate record.
+
+  - match: {method: card, source: customer, step: payment_authentication, reason: payment_ux_canceled}
+    class: ATTENTION
+    confidence: 0.45
+    cause_family: cancel_reason_unknown
+    deliberately_low_confidence: true
+    note: >-
+      "Customer cancelled" says what they did, not why. Abandoning at
+      authentication because they were interrupted is ATTENTION; abandoning
+      because they saw their balance is LIQUIDITY. The payload cannot separate
+      them.
+
+  - match: {method: emandate, source: customer, step: payment_authentication, reason: payment_ux_canceled}
+    class: ATTENTION
+    confidence: 0.45
+    cause_family: cancel_reason_unknown
+    deliberately_low_confidence: true
+    note: "Same ambiguity as the card case."
+
+  - match: {method: card, source: gateway, step: payment_initiation, reason: gateway_technical_error}
+    class: INFRASTRUCTURE
+    confidence: 0.50
+    cause_family: technical_error_opaque
+    deliberately_low_confidence: true
+    note: >-
+      A gateway technical error at initiation is usually infrastructure, but it
+      is also the bucket a gateway uses when it cannot classify a downstream
+      decline. Confident enough to prefer INFRASTRUCTURE, not confident enough
+      to spend a capped execution on it.
+
+  - match: {method: emandate, source: gateway, step: payment_initiation, reason: gateway_technical_error}
+    class: INFRASTRUCTURE
+    confidence: 0.50
+    cause_family: technical_error_opaque
+    deliberately_low_confidence: true
+    note: "Same ambiguity as the card case."
+
+# --- Left for authoring -----------------------------------------------------
+# Two high-purity keys are deliberately NOT written here. Both are
+# insufficient_funds, both are unambiguous, and both deserve confident rows:
+#
+#   card/issuer_bank/payment_authorization/insufficient_funds
+#   emandate/bank/payment_debit_response/insufficient_funds
+#
+# They are the highest-value rows still missing -- LIQUIDITY at a confident band
+# is what earns a funding-window retry instead of a link.

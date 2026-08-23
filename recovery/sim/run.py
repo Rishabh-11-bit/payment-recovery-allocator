@@ -201,3 +201,102 @@ def mandate_survival_dominance(
         ordering=first if inversions == 0 else first,
         inversions=inversions,
     )
+
+
+# ------------------------------------------------- halted vs revoked -------
+
+
+@dataclass(frozen=True)
+class ExchangeRate:
+    """Halts added per revocation avoided, at one hazard.
+
+    Halted and revoked are two exit doors with different costs, not two
+    failures. Halted preserves mandate authority -- a card update reactivates
+    the subscription with no customer re-authorisation. Revoked destroys it:
+    recovery needs full re-registration, a fresh PDN, fresh AFA, and the
+    customer opening their UPI app, against Razorpay's own ~30% pre-registration
+    drop-off.
+
+    So trading revocations for halts is a real gain. This is the price of that
+    trade, reported rather than asserted, because whether it is a *good* trade
+    depends on how often halted subscriptions are actually recovered manually --
+    a rate nobody publishes.
+    """
+
+    challenger: str
+    incumbent: str
+    hazard: float
+    revocations_avoided: int
+    halts_added: int
+
+    @property
+    def rate(self) -> float | None:
+        if self.revocations_avoided <= 0:
+            return None
+        return self.halts_added / self.revocations_avoided
+
+
+@dataclass(frozen=True)
+class ExchangeRateBand:
+    challenger: str
+    incumbent: str
+    rates: tuple[ExchangeRate, ...]
+
+    @property
+    def values(self) -> tuple[float, ...]:
+        return tuple(r.rate for r in self.rates if r.rate is not None)
+
+    def describe(self) -> str:
+        values = self.values
+        if not values:
+            return (
+                f"{self.challenger} avoids no revocations against {self.incumbent} "
+                "at any hazard in the swept range"
+            )
+        span = (
+            f"{min(values):.1f}-{max(values):.1f}"
+            if min(values) != max(values)
+            else f"{min(values):.1f}"
+        )
+        return (
+            f"{self.challenger} vs {self.incumbent}: {span} additional halts per "
+            "revocation avoided, across the swept hazard range"
+        )
+
+
+def exchange_rate_band(
+    arms: Sequence[Arm],
+    world: World,
+    calendar: ComplianceCalendar,
+    hazard_range: tuple[float, float],
+    challenger: str,
+    incumbent: str,
+    *,
+    points: int = 5,
+    costs: CostModel | None = None,
+) -> ExchangeRateBand:
+    """Sweep the hazard and report the halt/revocation exchange rate as a band."""
+    low, high = hazard_range
+    step = (high - low) / (points - 1) if points > 1 else 0.0
+    rates = []
+    for index in range(points):
+        hazard = low + step * index
+        result = run_comparison(
+            arms, world.with_mandate_hazard(hazard), calendar, costs=costs
+        )
+        challenger_metrics = result.metrics[challenger]
+        incumbent_metrics = result.metrics[incumbent]
+        rates.append(
+            ExchangeRate(
+                challenger=challenger,
+                incumbent=incumbent,
+                hazard=hazard,
+                revocations_avoided=(
+                    incumbent_metrics.mandates_revoked - challenger_metrics.mandates_revoked
+                ),
+                halts_added=(
+                    challenger_metrics.mandates_halted - incumbent_metrics.mandates_halted
+                ),
+            )
+        )
+    return ExchangeRateBand(challenger=challenger, incumbent=incumbent, rates=tuple(rates))

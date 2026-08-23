@@ -46,7 +46,11 @@ from allocator.arm_c import ArmC
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
 from recovery.sim.horizon import SurvivalBasis, horizon_sweep
-from recovery.sim.run import mandate_survival_dominance, run_comparison
+from recovery.sim.run import (
+    exchange_rate_band,
+    mandate_survival_dominance,
+    run_comparison,
+)
 from recovery.sim.world import load_world_config, mandate_hazard_range, sample_world
 from recovery.store import Store
 from recovery.worker import process_pending
@@ -186,21 +190,30 @@ SIM_SEED = 42
 
 
 def _c5_section(config, classifier) -> bool:
-    """C5: all three arms over one sampled world."""
+    """C3 + C5: three arms, one sampled world.
+
+    Order matters. Cycle recovery first, because the bar asks for measured money
+    recovered across a batch and that figure is never demoted. Then the horizon
+    crossover, because one cycle is the wrong unit for judging an arm that
+    deliberately trades cycle recovery for mandate survival.
+    """
     world = sample_world(seed=SIM_SEED)
     calendar = calendar_from_config(config.regulatory)
     arms = [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)]
     result = run_comparison(arms, world, calendar, costs=classifier.config.costs)
+    hazard_range = mandate_hazard_range(load_world_config())
 
-    typer.echo(f"\nC5 simulator -- arms A and B, world seed {SIM_SEED}\n")
+    typer.echo(f"\nC3 + C5 -- three arms, world seed {SIM_SEED}\n")
     typer.echo(
         "  NOTE: one world. Every cardinal value below is a single draw from the "
         "ranges in\n        config/worlds.yaml. A defensible figure needs C8's "
-        "sweep across many worlds;\n        these numbers are the harness working, "
-        "not a result."
+        "sweep across many worlds."
     )
+
+    # --- 1. Cycle recovery. The bar's requirement, reported first, undemoted.
+    typer.echo("\n  MONEY RECOVERED ACROSS THE BATCH (one cycle)\n")
     typer.echo(
-        f"\n    {'arm':<5}{'recovered_INR':>15}{'attempts':>10}{'contacts':>10}"
+        f"    {'arm':<5}{'recovered_INR':>15}{'attempts':>10}{'contacts':>10}"
         f"{'term_att':>10}{'term_con':>10}"
     )
     for name in ("A", "B", "C"):
@@ -214,9 +227,6 @@ def _c5_section(config, classifier) -> bool:
     metrics_a = result.metrics["A"]
     metrics_b = result.metrics["B"]
     metrics_c = result.metrics["C"]
-
-    # Three arms so the uplift decomposes. A -> C alone would conflate the value
-    # of contacting people with the value of knowing why they failed.
     typer.echo(
         f"\n    A -> B  contact uplift:          Rs {result.uplift('B', 'A'):>12,.2f}"
         "   (value of contacting people)"
@@ -226,7 +236,45 @@ def _c5_section(config, classifier) -> bool:
         "   (value of knowing why)"
     )
     typer.echo(
-        f"\n    attempts spent where recovery is impossible: "
+        "\n    Arm C recovers less in one cycle, on purpose: it withholds contacts and\n"
+        "    executions that the other arms spend. Judging it on one cycle is the wrong\n"
+        "    unit -- see the crossover below."
+    )
+
+    # --- 2. The headline: at what horizon does that trade pay for itself?
+    typer.echo("\n\n  HEADLINE -- HORIZON CROSSOVER\n")
+    sweep = horizon_sweep(
+        arms, world, calendar, hazard_range, costs=classifier.config.costs
+    )
+    for incumbent in ("B", "A"):
+        typer.echo(f"    {sweep.crossover('C', incumbent).describe()}")
+    typer.echo(
+        "\n    A mandate is an annuity. An arm that recovers less now while keeping more\n"
+        "    mandates alive is ahead from some remaining lifetime onward, and that\n"
+        "    lifetime is the claim -- reported as a band across the hazard range, never\n"
+        "    at a single hazard and never as a rupee LTV figure."
+    )
+
+    typer.echo("\n    exit doors -- halted preserves mandate authority, revoked destroys it:")
+    for incumbent in ("A", "B"):
+        band = exchange_rate_band(
+            arms, world, calendar, hazard_range, "C", incumbent,
+            costs=classifier.config.costs,
+        )
+        typer.echo(f"      {band.describe()}")
+    typer.echo(
+        "\n      Trading revocations for halts is a real gain: a halted subscription can\n"
+        "      be reactivated by a card update with no customer re-authorisation, while a\n"
+        "      revoked mandate needs full re-registration, a fresh PDN and fresh AFA\n"
+        "      against ~30% pre-registration drop-off. Whether this particular rate is a\n"
+        "      good trade depends on manual-recovery rates for halted subscriptions,\n"
+        "      which are not published. Stated, not asserted."
+    )
+
+    # --- 3. Supporting evidence.
+    typer.echo("\n\n  SUPPORTING\n")
+    typer.echo(
+        f"    attempts spent where recovery is impossible: "
         f"A {metrics_a.terminal_attempts_wasted}, "
         f"B {metrics_b.terminal_attempts_wasted}, "
         f"C {metrics_c.terminal_attempts_wasted}"
@@ -238,11 +286,6 @@ def _c5_section(config, classifier) -> bool:
         f"C {metrics_c.wasted_attempt_share:.0%}"
     )
 
-    # Classifier coverage bounds what the allocator can do. An unmapped key
-    # lands in the LOW row, which is correct and conservative -- one link, no
-    # execution. The more of the batch is unmapped, the more Arm C behaves like
-    # a link-only arm regardless of how good the decision table is. Printed
-    # because a money figure for Arm C is uninterpretable without it.
     arm_c = ArmC(calendar, classifier, config)
     coverage = _coverage(arm_c, world)
     typer.echo(
@@ -251,33 +294,16 @@ def _c5_section(config, classifier) -> bool:
     )
     if classifier.config.is_stub:
         typer.echo(
-            "    ^ the taxonomy is a STUB. Arm C's money figure is bounded by this,\n"
-            "      not by the decision table. Do not read it as the allocator's ceiling."
+            "    ^ the taxonomy is a STUB. Arm C's cycle figure is bounded by this,\n"
+            "      not by the decision table."
         )
 
-    # Mandate survival: an ordering, not a count. The count depends on an
-    # invented revocation hazard; the ordering survives the whole range.
     dominance = mandate_survival_dominance(
-        [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)],
-        world,
-        calendar,
-        mandate_hazard_range(load_world_config()),
-        costs=classifier.config.costs,
+        arms, world, calendar, hazard_range, costs=classifier.config.costs
     )
-    typer.echo("\n  mandate survival -- reported as dominance, never as a count:")
-    typer.echo(f"    {dominance.describe()}")
-    typer.echo(
-        f"    ordering inversions across the range: {dominance.inversions}"
-        + (
-            f", crossing at {dominance.crossover_points()}"
-            if dominance.crossover_points()
-            else ""
-        )
-    )
-    typer.echo(
-        "    (no mandate count is printed anywhere: it would rest on a revocation\n"
-        "     rate nobody publishes. The ordering does not need one.)\n"
-    )
+    typer.echo("\n    mandate survival, as an ordering rather than a count:")
+    typer.echo(f"      {dominance.describe()}")
+    typer.echo(f"      ordering inversions across the range: {dominance.inversions}")
 
     _echo_horizon(arms, world, calendar, classifier)
 
