@@ -45,6 +45,7 @@ from recovery.normalize import normalize_entity
 from allocator.arm_c import ArmC
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
+from recovery.sim.horizon import SurvivalBasis, horizon_sweep
 from recovery.sim.run import mandate_survival_dominance, run_comparison
 from recovery.sim.world import load_world_config, mandate_hazard_range, sample_world
 from recovery.store import Store
@@ -278,6 +279,8 @@ def _c5_section(config, classifier) -> bool:
         "     rate nobody publishes. The ordering does not need one.)\n"
     )
 
+    _echo_horizon(arms, world, calendar, classifier)
+
     return all(
         [
             _check("arms saw the same batch", result.metrics["B"].cases, metrics_a.cases),
@@ -308,6 +311,69 @@ def _c5_section(config, classifier) -> bool:
             ),
         ]
     )
+
+
+LIFETIME_SAMPLES = (6, 12, 18, 24)
+
+
+def _echo_horizon(arms, world, calendar, classifier) -> None:
+    """At what remaining lifetime does preservation outweigh cycle recovery?
+
+    Reported as a crossover band across the swept hazard range. Never a single
+    lifetime at a single hazard, and never a headline rupee figure.
+    """
+    hazard_range = mandate_hazard_range(load_world_config())
+    typer.echo("\n  horizon sensitivity -- cycle recovery vs preserved mandates:\n")
+
+    for basis in SurvivalBasis:
+        sweep = horizon_sweep(
+            arms, world, calendar, hazard_range, basis=basis, costs=classifier.config.costs
+        )
+        if basis.is_degenerate:
+            typer.echo(
+                f"    basis={basis.value} -- DEGENERATE under the current outcome model."
+            )
+            typer.echo(
+                "      Every case ends recovered, revoked or halted, so"
+                " preserved-minus-halted"
+            )
+            typer.echo(
+                "      is identically cases_recovered and the annuity term just restates"
+            )
+            typer.echo(
+                "      the cycle term. Shown so the degeneracy is visible, not as a result."
+            )
+        else:
+            typer.echo(f"    basis={basis.value}")
+        for incumbent in ("B", "A"):
+            typer.echo(f"      {sweep.crossover('C', incumbent).describe()}")
+        typer.echo("")
+
+    # The curve, as a band across hazards rather than a line at one of them.
+    sweep = horizon_sweep(arms, world, calendar, hazard_range, costs=classifier.config.costs)
+    typer.echo(
+        "    total value by remaining lifetime, Rs (min-max across the hazard range,"
+    )
+    typer.echo(
+        f"    basis=not_revoked, monthly charge Rs {sweep.monthly_value_paise / 100:,.2f}"
+        " derived from the batch):"
+    )
+    typer.echo("")
+    typer.echo(f"      {'months':<8}" + "".join(f"{name:>26}" for name in ("A", "B", "C")))
+    for months in LIFETIME_SAMPLES:
+        cells = ""
+        for name in ("A", "B", "C"):
+            low, high = sweep.value_band_inr(name, months)
+            cells += f"{low:>11,.0f}-{high:<14,.0f}"
+        typer.echo(f"      {months:<8}" + cells)
+    typer.echo("")
+    typer.echo(
+        "    These are value orderings, not LTV estimates. Only the lifetime at which"
+    )
+    typer.echo(
+        "    an ordering flips is a claim; the rupee figures are the arithmetic behind"
+    )
+    typer.echo("    it and are not quoted anywhere as a result.")
 
 
 def _coverage(arm, world) -> float:
