@@ -1,0 +1,30 @@
+# =============================================================================
+# UNCALIBRATED. These numbers are chosen, not derived.
+#
+# This profile exists so the plumbing has a default that is honest about being
+# a guess. It carries the values that were previously inline in worlds.yaml,
+# unchanged, so switching to profiles moved no result.
+#
+# `derives_from` is empty on purpose. A profile that claims no source is a
+# profile nobody can mistake for calibrated.
+# =============================================================================
+
+name: uncalibrated
+status: UNCALIBRATED
+description: >-
+  The failure-class mix as originally guessed. Retained as the default so the
+  profile mechanism has a baseline that changes nothing, and as the thing a
+  calibrated profile has to be compared against.
+
+class_mix:
+  INFRASTRUCTURE: [0.10, 0.25]
+  LIQUIDITY:      [0.40, 0.60]
+  ATTENTION:      [0.10, 0.25]
+  TERMINAL:       [0.10, 0.25]
+
+derives_from: []
+
+notes: >-
+  The LIQUIDITY weighting reflects nothing more than Razorpay listing
+  insufficient balance first among the causes of the ~20% debit-failure figure.
+  Being listed first is not a proportion.

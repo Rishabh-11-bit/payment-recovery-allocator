@@ -19,6 +19,7 @@ from typing import Any, Mapping, Sequence
 
 import yaml
 
+from recovery.calibration import load_profile
 from recovery.models import FailureClass
 
 DEFAULT_WORLDS_PATH = pathlib.Path("config/worlds.yaml")
@@ -81,6 +82,9 @@ class World:
     """One sampled world. Immutable, and never visible to an arm."""
 
     seed: int
+    # Which calibration profile the failure mix came from, so any reported
+    # result can be traced to its provenance -- or to the absence of one.
+    calibration_profile: str
     horizon_days: int
     batch_size: int
     class_mix: Mapping[str, float]
@@ -124,6 +128,24 @@ class World:
         return min(1.0, base)
 
 
+def _resolve_class_mix(batch: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
+    """Profile name and the ranges it supplies.
+
+    An inline `class_mix` overrides the profile and is reported as
+    `inline-override` rather than borrowing a profile's name -- a result taken
+    from an override has no provenance and must not appear to have one.
+    """
+    if batch.get("class_mix"):
+        return "inline-override", batch["class_mix"]
+    name = batch.get("calibration_profile")
+    if not name:
+        raise WorldConfigError(
+            "batch needs either `calibration_profile` or an inline `class_mix`"
+        )
+    profile = load_profile(str(name))
+    return profile.name, profile.class_mix
+
+
 def mandate_hazard_range(raw: Mapping[str, Any]) -> Range:
     """The configured revocation range, for sweeping rather than for sampling."""
     return _as_range(
@@ -153,6 +175,7 @@ def sample_world(
     rng = random.Random(seed)
 
     batch = raw.get("batch") or {}
+    profile_name, class_mix_ranges = _resolve_class_mix(batch)
     recovery_raw = raw.get("recovery") or {}
     link_raw = raw.get("link_conversion") or {}
     mandate = raw.get("mandate") or {}
@@ -179,9 +202,10 @@ def sample_world(
 
     return World(
         seed=seed,
+        calibration_profile=profile_name,
         horizon_days=int(raw.get("horizon_days", 10)),
         batch_size=int(batch.get("size", 500)),
-        class_mix=_sample_mix(rng, batch.get("class_mix") or {}, "batch.class_mix"),
+        class_mix=_sample_mix(rng, class_mix_ranges, "batch.class_mix"),
         rail_mix=_sample_mix(rng, batch.get("rail_mix") or {}, "batch.rail_mix"),
         amount_paise=_as_range(batch.get("amount_paise"), "batch.amount_paise"),
         recovery=recovery,

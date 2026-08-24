@@ -117,7 +117,11 @@ def test_stress_widens_the_ranges_it_names():
 def test_stress_leaves_untouched_ranges_alone():
     nominal = load_world_config()
     stressed = stress_config(nominal)
-    assert stressed["batch"]["class_mix"] == nominal["batch"]["class_mix"]
+    # The failure mix now comes from a calibration profile, not inline
+    # constants; stress must not silently swap the profile either.
+    assert stressed["batch"]["calibration_profile"] == (
+        nominal["batch"]["calibration_profile"]
+    )
     assert stressed["recovery"]["TERMINAL"] == nominal["recovery"]["TERMINAL"]
 
 
@@ -236,3 +240,30 @@ def test_sweep_records_a_crossover_for_every_incumbent(outcomes):
     for outcome in outcomes:
         assert set(outcome.crossover) == {"A", "B"}
         assert set(outcome.already_ahead) == {"A", "B"}
+
+
+# ----------------------------------------------------- calibration (C9) --- #
+
+
+def test_world_records_which_profile_its_mix_came_from():
+    """A reported mix must be traceable to its provenance, or its absence."""
+    assert sample_world(seed=3).calibration_profile == "uncalibrated"
+
+
+def test_inline_class_mix_is_reported_as_an_override_not_a_profile():
+    """A result taken from an override has no provenance and must not borrow one."""
+    raw = load_world_config()
+    raw["batch"] = {**raw["batch"], "class_mix": {"INFRASTRUCTURE": [1, 1],
+                                                  "LIQUIDITY": [1, 1],
+                                                  "ATTENTION": [1, 1],
+                                                  "TERMINAL": [1, 1]}}
+    assert sample_world(seed=3, raw=raw).calibration_profile == "inline-override"
+
+
+def test_a_batch_with_neither_profile_nor_mix_is_rejected():
+    from recovery.sim.world import WorldConfigError
+
+    raw = load_world_config()
+    raw["batch"] = {k: v for k, v in raw["batch"].items() if k != "calibration_profile"}
+    with pytest.raises(WorldConfigError, match="calibration_profile"):
+        sample_world(seed=1, raw=raw)
