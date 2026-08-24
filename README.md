@@ -2,9 +2,9 @@
 
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
-**Status:** Phase 2 — C1 event core, C2 classifier (taxonomy authored), C3 allocator,
-C4 guard, C5 simulator with all three arms, C7 property-based invariant tests, C8 robustness
-sweep. Cost values still stubbed.
+**Status:** Phase 2 — C1 event core, C2 classifier, C3 allocator, C4 guard, C5 simulator with
+all three arms, C6 audit ledger, C7 property invariants, C8 robustness sweep, C9 calibration.
+Cost-matrix values still stubbed. C10–C12 not built.
 
 ---
 
@@ -71,86 +71,129 @@ misdiagnosis makes recovery harder. A LOW band discards the predicted class and 
 the cost matrix which class has the lowest worst-case cost of being wrong — the
 cheaper error, not the more likely class.
 
-**C5 — simulator, arms A and B.** A synthetic mandate-debit batch with a rail dimension
-(Card / UPI / Emandate). Every cardinal value is sampled from a range in
-`config/worlds.yaml`, never fixed — C8's sweep is many worlds, so parameterisation is
-structural rather than retrofitted.
+**C5 + C3 — simulator and three arms.** A synthetic mandate-debit batch with a rail
+dimension (Card / UPI / Emandate). Every cardinal value is sampled from a range, never
+fixed. Ground truth is hidden: arms see only the emitted payload, and emission is
+deliberately noisy so misclassification costs bind rather than decorate.
 
-Ground truth is hidden: arms see only the emitted payload, and emission is deliberately
-noisy so misclassification costs bind rather than decorate. The environment — not the
-arms — enforces the attempt cap, the non-peak windows and the PDN lead time, so no arm
-can benefit from ignoring them, and every rejection is counted and attributed.
+All figures below use the **`bounded-2026`** calibration profile, which is the default.
+`--profile uncalibrated` runs the earlier guessed mix for comparison.
 
-Arm A is Razorpay's documented schedule, reimplemented and cause-blind: Card and UPI at
-T+1/T+2/T+3 then halted, Emandate asynchronous with bank-holiday shifting. Arm B adds one
-generic recovery link per failure, so A→B isolates the value of contact and B→C will
-isolate the value of cause-awareness.
+### One cycle, world seed 42
 
-**Mandate survival is reported as a dominance ordering, never as a count.** A count
-depends on a per-notification revocation rate nobody publishes. The ordering does not:
-the hazard is swept across its full configured range, and what is reported is whether
-one arm preserves more than another at every point, and whether the ordering inverts.
-Same discipline as LTV — swept, never quoted at a point. See `ASSUMPTIONS.md`.
+Mix drawn: INFRASTRUCTURE 48%, TERMINAL 36%, LIQUIDITY 10%, ATTENTION 6%.
 
-**The figures `reproduce` prints for C5 are a single world draw and are not a result.**
-A defensible number needs C8's sweep across sampled worlds and its stated breaking point.
+| arm | recovered ₹ | attempts | contacts | wasted attempts | wasted contacts |
+|---|---|---|---|---|---|
+| A | 153,351.63 | 1,174 | 0 | 597 | 0 |
+| B | 167,851.33 | 1,033 | 500 | 565 | 202 |
+| C | **113,941.57** | 369 | 308 | **37** | 189 |
 
-**C7 — property-based invariants.** The safety invariant is *never create a payment
-obligation outside the original order's attempt chain while that chain is within its
-late-authorisation window.* Orderings are generated rather than hand-written —
-duplicate deliveries, out-of-order deliveries, failed-then-late-authorized inside the
-3-day window, a worker crashing between claim and finish, two workers on one case,
-order expiry mid-recovery, a PDN window shift.
+A→B contact uplift ₹14,499.70. B→C ₹−53,909.76. **Arm C recovers less in one cycle, and
+that is the arm working as designed** — it withholds executions and contacts the other
+arms spend. Share of the capped budget spent where recovery was impossible: A 51%,
+B 55%, **C 10%**.
 
-```
-python -m recovery.reproduce --c7-sequences 5000
-```
+Switching from the guessed profile to the calibrated one moved Arm C's figure here from
+₹151,735 to ₹113,942. That is not a regression: seed 42 under `bounded-2026` draws
+INFRASTRUCTURE at 48% and TERMINAL at 36% — a world where most failures are transient and
+retrying blindly works, so C should do badly. **Reporting the worse number under the more
+defensible profile is the point.** The single-world figure was always a draw, not a result.
 
-**Verified: 5,000 adversarial orderings, 42,715 events, no violation** — re-run after
-C4 so the result covers every generated hazard rather than a subset. The search is
-seeded (`seed=20260823`), so that run reproduces exactly; it takes ~12 minutes.
-`reproduce` defaults to 500 orderings to stay quick, and always prints the count it
-actually explored — a clean run is worth only the size of the search.
+### The claim: horizon crossover
 
-The orderings are sampled from the generated space, not enumerated over it, so this is
-evidence rather than proof. Hypothesis searches the same space adaptively in the test
-suite and shrinks any failure to a minimal sequence.
+A mandate is an annuity. An arm that recovers less now while keeping more mandates alive
+is ahead from some remaining lifetime onward, and that lifetime is the claim.
 
-**The search is validated by mutation**, which is what licenses the claim. Four planted
-bugs, each of which the search must find: the late-authorisation guard removed, the
-attempt chain split, the order-expiry check disabled, the execution timing checks
-disabled. A search that cannot find a planted bug is not evidence of absence.
-
-A separate test asserts every hazard actually fires a block across several seeds — a
-hazard that never blocks anything is a hazard in name only, and that check is what
-caught the PDN window being masked by the peak-hour check.
-
-**C8 — robustness sweep.** Every cardinal value is redrawn per world — recovery
-curves, link conversion, revocation hazard, failure mix, rail mix, emission fidelity
-— and all three arms run in each. Two range sets: `nominal` samples inside the
-calibrated ranges, `stress` widens them past calibration to locate the edge.
-
-```
-python -m recovery.reproduce --sweep-worlds 300
-```
-
-The output is the **breaking point**, not a win rate. Verified over 300 worlds per
-range set:
+Over **300 sampled worlds per range set**:
 
 | | vs A | vs B |
 |---|---|---|
-| C ahead by 12 months | 91% of worlds | 96% |
-| Crossover, p10 / median / p90 | 0.2 / 1.2 / 5.2 months | 0.3 / 1.5 / 5.2 |
-| Never overtakes | 25 worlds | 7 |
+| C ahead by 6 months | 89% | 92% |
+| C ahead by 12 months | **93%** | **97%** |
+| C ahead by 24 months | 95% | 99% |
+| Crossover p10 / median / p90 | 0.2 / 1.5 / 7.5 months | 0.3 / 1.6 / 5.2 |
+| Ahead from the start | 139 worlds | 7 |
+| Never overtakes | 13 worlds | 3 |
 
-**C loses where the revocation hazard is low** — below ~0.010–0.014 per
-notification, C loses 30–60% of those worlds against 2–7% elsewhere. The mechanism
-is plain: if repeated failure notifications cost few mandates, protecting mandates
-buys little and contacting everyone wins. That parameter is the least evidenced
-number in the project, so **the result depends most on what can be defended least**.
-See `ASSUMPTIONS.md`.
+Arm B wins cycle recovery in **93% of worlds**. Arm C's case is entirely the horizon, and
+that is stated rather than buried.
 
-Arm B wins cycle recovery in ~93% of worlds. Arm C's case is entirely the horizon.
+**Mandate survival is reported as an ordering, never a count** — a count would rest on a
+per-notification revocation rate nobody publishes. At seed 42: `C > A > B` at every hazard
+in the swept range, zero inversions.
+
+Halted and revoked are different exit doors: halted preserves mandate authority, revoked
+destroys it. C buys each avoided revocation with 2.0–4.8 additional halts against A and
+1.5–4.2 against B, swept across the hazard range. Whether that is a good trade depends on
+manual-recovery rates for halted subscriptions, which are not published.
+
+### Where it breaks
+
+Under the calibrated profile, **no parameter condition separates wins from losses inside
+the calibrated ranges**. Under stress ranges deliberately widened past calibration:
+
+> C loses where `revocation_per_notification` is below ~0.0103 — **40%** of those worlds
+> against A, **63%** against B, versus 3–4% elsewhere.
+
+The mechanism is plain: if repeated failure notifications cost few mandates, protecting
+mandates buys little and contacting everyone wins. That parameter is the least evidenced
+number in the project, so **the result depends most on what can be defended least**. It is
+volunteered rather than left to be discovered.
+
+### What calibration exposed — the stronger result
+
+The crossover surviving calibration is reassuring. This is the more interesting finding.
+
+The guessed mix pinned INFRASTRUCTURE at 10–25% and TERMINAL at 10–25%. Two conditions
+under which Arm C loses sit **outside those ranges**:
+
+| Condition | Loss rate inside | Outside |
+|---|---|---|
+| `class_mix_INFRASTRUCTURE` above ~0.45 | 26% of 39 worlds | 4% of 161 |
+| `class_mix_TERMINAL` below ~0.064 | 30% of 20 worlds | 7% of 180 |
+
+The old sweep **structurally could not sample either region**, however many worlds it drew.
+A sweep confined to a guessed range does not test the guess; it tests everything except the
+guess. That is the argument for bounding a parameter rather than assuming it, and it is a
+stronger claim than the crossover holding: the calibrated sweep found real failure modes
+the guessed one was incapable of finding.
+
+**C9 — calibration.** Sources in `data/`, each with a `.source.md` sidecar recording
+origin, retrieval date and provenance **per figure** — Razorpay is primary for claims
+about its own stack and secondary where it cites unattributed industry data, and the same
+document contains both.
+
+```
+python -m recovery.calibration
+```
+
+The four-way split is not in the published data. Razorpay's figure covers three classes in
+one number — "insufficient balance, bank downtime, or cancelled mandates" — and never
+mentions the fourth. So `bounded-2026` does not map it: the split is **swept across the
+full simplex** and ATTENTION bounded as a residual, with the profile's `interpretation`
+field stating that the split is unavailable and therefore swept rather than assumed. A
+profile claiming to be calibrated cannot load without that field.
+
+Issuer outage *is* sourced: four months of NPCI per-bank downtime give a mean of
+0.57%–0.78% of the month per affected bank, a per-bank range of 0.08%–2.65%, and 25
+distinct banks of which two — Central Bank of India and Punjab National Bank — appear in
+every month. It is deliberately **not** used to set the INFRASTRUCTURE share, because
+converting outage hours into a share of failures needs transaction volume during outage
+windows that no file provides.
+
+**C6 — audit ledger.** A query surface over the append-only trail, and a decision trace.
+
+```
+python -m recovery.explain pay_TSjVZi1gipZs5L
+python -m recovery.explain --summary
+```
+
+Resolves by case id, order id, or any payment on the chain — whoever asks "why did this
+happen" has whichever identifier the complaint arrived with. The trace names the
+classification, the decision and its idempotency key, and **every guard block with its
+reason**: a case that did nothing shows why, because "no decision" and "a decision the
+guard refused" are different facts. The ledger holds no write path, enforced by a test.
 
 **C4 — the guard.** Admission control between Allocate and Execute; every proposal
 passes through. Mandate-execution cap, non-peak windows, PDN lead time with the 23:50

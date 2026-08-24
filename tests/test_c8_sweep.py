@@ -249,7 +249,29 @@ def test_sweep_records_a_crossover_for_every_incumbent(outcomes):
 
 def test_world_records_which_profile_its_mix_came_from():
     """A reported mix must be traceable to its provenance, or its absence."""
-    assert sample_world(seed=3).calibration_profile == "uncalibrated"
+    import yaml
+
+    configured = yaml.safe_load(
+        pathlib.Path("config/worlds.yaml").read_text(encoding="utf-8")
+    )["batch"]["calibration_profile"]
+    assert sample_world(seed=3).calibration_profile == configured
+
+
+def test_the_shipped_default_profile_is_calibrated():
+    """Switching the default was deliberate; this stops it drifting back."""
+    from recovery.calibration import load_profile
+
+    profile = load_profile(sample_world(seed=1).calibration_profile)
+    assert profile.is_calibrated, "the default profile is a guess again"
+    assert profile.derives_from, "the default profile cites no source"
+    assert profile.interpretation.strip()
+
+
+def test_the_guessed_profile_stays_runnable_for_comparison():
+    raw = load_world_config()
+    raw["batch"] = {**raw["batch"], "calibration_profile": "uncalibrated"}
+    world = sample_world(seed=1, raw=raw)
+    assert world.calibration_profile == "uncalibrated"
 
 
 def test_inline_class_mix_is_reported_as_an_override_not_a_profile():

@@ -22,7 +22,10 @@ batch:
   # An inline `class_mix:` here still overrides the profile -- tests use that --
   # but it is an override, and anything reported from an override is reported
   # without provenance.
-  calibration_profile: uncalibrated
+  # bounded-2026: sourced where the published data reaches, swept where it does
+  # not. `uncalibrated` is retained and runnable for comparison --
+  # `--profile uncalibrated` -- but it is a guess and says so.
+  calibration_profile: bounded-2026
 
   # UPI Autopay failure rates run ~8-15% vs ~2-3% for card mandates, so a
   # failure batch skews UPI relative to the population of mandates.
