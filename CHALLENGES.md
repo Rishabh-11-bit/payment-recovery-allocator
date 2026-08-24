@@ -640,7 +640,141 @@ than have a panel ask what the number meant.
 
 ---
 
-## 011 — _(next entry)_
+## 011 — A finding about identity is only as good as the key you matched on
+
+**Date:** Phase 2
+**Tags:** `#data` `#domain`
+
+**Problem**
+Four months of NPCI per-bank downtime data. The obvious question is whether outages are
+transient and rotating or whether particular banks are persistently bad, because the answer
+decides what admission control should look like: a static blocklist for a fixed set of bad
+banks, or a responsive governor watching current conditions.
+
+Counting bank names across the four files gave a clean answer. 29 distinct banks, 18
+appearing in exactly one month, and exactly one — Central Bank of India — appearing in all
+four. Mostly rotating, with a single persistent outlier. A tidy finding.
+
+**Diagnosis**
+It was wrong, and it was wrong in the direction that made it tidy.
+
+The published files spell four banks two different ways across months:
+
+    India Post Payments Bank Limited  /  India Post Payments Bank Ltd
+    Punjab National Bank              /  Punjab national Bank
+    Telangana Grameen Bank            /  Telangana Grameena Bank
+    Airtel Payments Bank Limited      /  Airtel Payments Bank Ltd
+
+Two are Limited-versus-Ltd, one is a stray lowercase word, one is a vowel. Normalising for
+those gives **25 distinct banks, 12 appearing once, and two banks in all four months** —
+Central Bank of India and Punjab National Bank.
+
+Punjab National Bank had been split across two spellings, so it read as three months out of
+four and fell into the "rotating" bucket. It is not rotating. It is persistent, and its
+downtime went 1.67h, 8.80h, 9.40h, 7.95h — starting low and settling five times higher,
+while Central Bank oscillates around a stable level.
+
+So the corrected finding is not "mostly rotating with one persistent outlier". It is **two
+persistent banks, one steady and one that got worse during the observation window.**
+
+**Options**
+1. Report the raw count and note the spelling variance — rejected, that reports a number
+   known to be wrong alongside the reason it is wrong
+2. Normalise and report only the normalised count — rejected, it hides that the published
+   data has this defect, which a reader checking against the source will hit immediately
+3. Report both, name the merged pairs, and say what changes
+
+**Resolution**
+Option 3. `recovery/calibration.py` normalises Ltd/Limited, Grameen/Grameena, case and
+punctuation; the inventory reports "29 as spelled, 25 after normalising", lists the merged
+pairs, and states that counting them separately makes a bank that appeared every month look
+intermittent.
+
+The `bounded-2026` calibration profile models the two populations separately: a rotating
+population with a wide share range, and a persistent population of two named banks with
+their observed ranges.
+
+**Why it mattered**
+The design consequence inverts. "One persistent bad bank" is an argument for a static
+blocklist — identify the bank, deprioritise it, done. "Two, one of which was fine in April
+and five times worse by June" is an argument for the opposite: admission control has to
+respond to observed conditions, because the bank that needs handling next month is not
+necessarily one that looks bad today. Punjab National Bank in April looked like every other
+transient. That is the case a static list misses.
+
+The generalisable point is narrower than "clean your data" and more useful. **A finding
+about identity — how many distinct things, which ones recur — is only as good as the key you
+matched on.** Aggregate statistics survive a messy key: total downtime hours were correct
+throughout, because summing does not care what the rows are called. Anything that counts
+*distinct* entities, or tracks one across time, silently inherits every inconsistency in the
+identifier. Those are exactly the questions worth asking of operational data, and exactly
+the ones a raw string key answers wrongly without complaining.
+
+---
+
+## 012 — A month that was not a month
+
+**Date:** Phase 2
+**Tags:** `#data` `#evaluation`
+
+**Problem**
+NPCI's monthly UPI statistics file lists volume and value by month. August-2026 shows 15,198
+million transactions against July's 23,658 million — a 36% collapse, in a series that had
+been flat at 22-24 billion for four straight months.
+
+A 36% month-over-month drop in national payment volume would be extraordinary, and it would
+be the most interesting thing in the file.
+
+**Diagnosis**
+It is not a drop. August-2026 covers **19 days, not 31**.
+
+The file gives both total volume and average daily volume, and dividing one by the other
+recovers the number of days:
+
+    August:  15,198.45 / 799.9184  = 19.0
+    July:    23,658.35 / 763.1726  = 31.0
+    June:    22,716.08 / 757.2027  = 30.0
+
+Every other row divides to its true month length. August divides to 19, because the file is
+published mid-month and the current month is partial.
+
+**Nothing in the file says so.** There is no "partial" flag, no as-of date, no footnote. The
+row looks exactly like the complete ones. And the giveaway is only visible because the
+publisher happens to include the daily average as well as the total — with the total alone,
+the row is indistinguishable from a genuine collapse.
+
+Average daily volume tells the true story: 799.92 in August against 763.17 in July, the
+highest in the series. Volume was *rising*.
+
+**Options**
+1. Drop August — rejected, it is real data for the days it covers and the daily average is
+   the highest in the file
+2. Use it as published and note the caveat — rejected, any month-over-month total including
+   August is wrong by 40% regardless of what a note says
+3. Record the partiality in the sidecar and use daily averages for any comparison that spans
+   it
+
+**Resolution**
+Option 3. The sidecar states the implied day count for every row, marks August partial, and
+says explicitly that a month-over-month comparison including it compares 19 days against 30
+or 31.
+
+**Why it mattered**
+This one has not caused a wrong number in this project, because nothing yet uses the monthly
+series. That is luck rather than diligence, and it is the reason it is worth logging: the
+error mode is silent, it appears in the most-cited file in the set, and it produces a result
+that is not obviously absurd. "UPI volume fell 36%" is wrong but plausible enough that
+somebody would build a paragraph on it.
+
+The habit that catches it generalises: **published aggregates should be checked against
+their own internal arithmetic before use.** The file contained everything needed to detect
+the problem — total, daily average, and a month name — and the check took one division. Any
+series where a total and a rate are both published can be validated against itself, and a
+row that fails that check is telling you something the schema does not.
+
+---
+
+## 013 — _(next entry)_
 
 **Date:**
 **Tags:**

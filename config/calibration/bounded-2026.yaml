@@ -1,0 +1,162 @@
+# =============================================================================
+# BOUNDED. Sourced where the data reaches, swept where it does not.
+#
+# The published data does not split failures four ways, so this profile does not
+# pretend to. It bounds the split and lets C8's sweep carry the bound, so the
+# result holds across the whole range rather than at a fabricated point.
+# =============================================================================
+
+name: bounded-2026
+status: BOUNDED
+
+description: >-
+  Failure-class mix bounded rather than mapped. The share of failures across
+  LIQUIDITY / INFRASTRUCTURE / TERMINAL is swept over the full simplex because
+  no published figure splits them; ATTENTION is bounded by what is left, because
+  no published figure mentions it at all. Bank-outage rate and distribution are
+  sourced directly from four months of NPCI downtime data.
+
+# --- How the mix is drawn ---------------------------------------------------
+# `simplex` rather than `independent`: the three named classes are drawn
+# uniformly over the simplex, so every plausible split is reachable and none is
+# preferred. Independent ranges then normalised would concentrate the draw near
+# the middle of the box, which is a point estimate wearing a range's clothes.
+sampling: simplex
+
+# The three causes Razorpay names, swept without preference between them.
+named_classes: [LIQUIDITY, INFRASTRUCTURE, TERMINAL]
+
+# Optional clamps on the simplex. Deliberately wide: they exclude only degenerate
+# corners where a class vanishes entirely, which would stop the comparison
+# testing that class at all rather than representing a real belief about the mix.
+named_bounds:
+  LIQUIDITY:      [0.05, 0.90]
+  INFRASTRUCTURE: [0.05, 0.90]
+  TERMINAL:       [0.05, 0.90]
+
+# ATTENTION is the residual. NO SOURCE SPEAKS TO IT -- it appears in none of the
+# files, and Razorpay's sentence naming failure causes does not mention it. The
+# range is wide because the evidence is absent, not because the quantity is
+# believed to vary that much.
+attention_share: [0.05, 0.35]
+
+class_mix:
+  # Retained for readers and for any tool that wants a coarse bound without
+  # sampling. These are the *outer* bounds of what `sampling: simplex` can draw,
+  # not a distribution. The sampler does not read them.
+  LIQUIDITY:      [0.0325, 0.855]
+  INFRASTRUCTURE: [0.0325, 0.855]
+  TERMINAL:       [0.0325, 0.855]
+  ATTENTION:      [0.05, 0.35]
+
+# --- Bank outage: sourced, not inferred -------------------------------------
+# Straight from the four NPCI downtime workbooks. Every figure below is computed
+# by `python -m recovery.calibration` from the files in data/, not transcribed.
+#
+# Consumed by C11 (storm governor). Recorded now so the sourced distribution is
+# in the repo before the component that needs it exists. It is deliberately NOT
+# used to set the INFRASTRUCTURE share: converting outage hours into a share of
+# failures needs transaction volume during the outage windows, which none of the
+# files provide.
+issuer_outage:
+  months_observed: 4
+  affected_banks_per_month: [11, 13]
+  distinct_banks: 25
+  # Mean downtime per affected bank, as a share of the month. Stable across all
+  # four months, which is the one genuinely well-evidenced number here.
+  mean_share_per_affected_bank: [0.00571, 0.00781]
+  # Full per-bank range within a month.
+  per_bank_share: [0.00083, 0.02655]
+
+  # Two populations, because they behave differently and a single distribution
+  # would describe neither.
+  rotating:
+    # 12 of 25 banks appear in exactly one month; 39 of 47 bank-months belong to
+    # banks that are not present in all four.
+    bank_months: 39
+    banks_appearing_once: 12
+    share: [0.00083, 0.02655]
+    median_share: 0.00354
+  persistent:
+    # Present in all four months. Identified only after normalising spelling --
+    # the published files spell four banks two ways, and Punjab National Bank
+    # reads as three months of four until they are merged. See CHALLENGES 011.
+    count: 2
+    banks:
+      - name: Central Bank of India
+        share: [0.00936, 0.01884]
+        pattern: oscillating
+        observed_hours: [13.35, 6.97, 10.00, 14.02]
+      - name: Punjab National Bank
+        share: [0.00231, 0.01306]
+        pattern: rising_then_plateau
+        observed_hours: [1.67, 8.80, 9.40, 7.95]
+
+# --- Provenance -------------------------------------------------------------
+derives_from:
+  - source_file: razorpay-revenue-protect.pdf
+    figure: >-
+      Around 20% of subsequent debits fail due to insufficient balance, bank
+      downtime, or cancelled mandates
+    provenance: secondary
+    used_for: >-
+      Establishes that LIQUIDITY, INFRASTRUCTURE and TERMINAL are the named
+      causes. Supplies NO split between them, which is why the split is swept.
+
+  - source_file: Product-Statistics-UPI-Upi-downtime-April-2026-downtime.xlsx
+    figure: "Per-bank incident counts and downtime hours, April 2026"
+    provenance: primary
+    used_for: issuer_outage rate and distribution
+
+  - source_file: Product-Statistics-UPI-Upi-downtime-May-2026-downtime.xlsx
+    figure: "Per-bank incident counts and downtime hours, May 2026"
+    provenance: primary
+    used_for: issuer_outage rate and distribution
+
+  - source_file: Product-Statistics-UPI-Upi-downtime-June-2026-downtime.xlsx
+    figure: "Per-bank incident counts and downtime hours, June 2026"
+    provenance: primary
+    used_for: issuer_outage rate and distribution
+
+  - source_file: Product-Statistics-UPI-Upi-downtime-July-2026-downtime.xlsx
+    figure: "Per-bank incident counts and downtime hours, July 2026"
+    provenance: primary
+    used_for: issuer_outage rate and distribution
+
+  - source_file: Product-Statistics-UPI-Upi-uptime-July-2026-uptime.xlsx
+    figure: "NPCI switch: 100% uptime, NIL unscheduled downtime, NIL incidents"
+    provenance: primary
+    used_for: >-
+      Establishes that observed outage is issuer-side rather than central. July
+      only; no uptime file exists for April, May or June.
+
+interpretation: >-
+  THE SPLIT IS NOT AVAILABLE IN PUBLISHED DATA, SO IT IS SWEPT RATHER THAN
+  ASSUMED.
+
+  Razorpay reports one number -- around 20% of subsequent debits failing -- that
+  covers insufficient balance, bank downtime and cancelled mandates together.
+  Those are LIQUIDITY, INFRASTRUCTURE and TERMINAL in this taxonomy. No published
+  figure divides that 20% between them, so any three-way division would be
+  invented and then presented as sourced, which is worse than an invention that
+  is labelled. Instead the division is swept across the full simplex and the
+  result is reported as holding across the whole bound.
+
+  Razorpay's sentence lists the causes in an order. That is treated as weak
+  ordinal evidence at most and is deliberately NOT converted into percentages;
+  being named first is not a proportion, and the sampler expresses no preference
+  between the three.
+
+  ATTENTION is absent from every source. Its share is bounded as a residual, and
+  the width of that bound reflects the absence of evidence rather than a belief
+  about variability.
+
+  The issuer-outage figures are sourced and are not part of the sweep, but they
+  are also not used to set the INFRASTRUCTURE share: turning outage hours into a
+  share of failures needs transaction volume during outage windows, which none of
+  the files provide.
+
+notes: >-
+  Everything under issuer_outage is recomputable from data/ via
+  `python -m recovery.calibration`. If those files are updated, recompute rather
+  than editing these numbers by hand.

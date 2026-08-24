@@ -256,10 +256,68 @@ class CalibrationProfile:
     derives_from: tuple[DerivedFigure, ...] = ()
     notes: str = ""
     interpretation: str = ""
+    sampling: str = "independent"
+    named_classes: tuple[str, ...] = ()
+    named_bounds: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+    attention_share: tuple[float, float] | None = None
+    issuer_outage: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def is_calibrated(self) -> bool:
         return self.status.upper() != "UNCALIBRATED"
+
+    def sample_mix(self, rng) -> dict[str, float]:
+        """Draw one failure-class mix.
+
+        `independent` draws each class from its own range and normalises. That
+        is the original behaviour and is retained exactly, RNG draw order
+        included, so switching a profile does not silently move a result.
+
+        `simplex` draws the residual class from its bounded range and splits the
+        remaining mass uniformly over the simplex across the named classes.
+        Independent ranges then normalised would concentrate near the middle of
+        the box -- a point estimate wearing a range's clothes -- which defeats
+        the purpose of sweeping a split nobody has published.
+        """
+        if self.sampling != "simplex":
+            drawn = {
+                key: (low if low == high else rng.uniform(low, high))
+                for key, (low, high) in self.class_mix.items()
+            }
+            total = sum(drawn.values())
+            if total <= 0:
+                raise CalibrationError(f"{self.name}: class_mix sums to {total}")
+            return {key: value / total for key, value in drawn.items()}
+
+        if not self.named_classes or self.attention_share is None:
+            raise CalibrationError(
+                f"{self.name}: simplex sampling needs `named_classes` and "
+                "`attention_share`"
+            )
+
+        low, high = self.attention_share
+        residual = low if low == high else rng.uniform(low, high)
+        remaining = 1.0 - residual
+
+        # Uniform over the simplex: exponential draws, normalised. Rejection
+        # against the clamps rather than clipping, because clipping piles mass
+        # onto the bounds and would make the excluded corners look common.
+        for _ in range(200):
+            weights = [rng.expovariate(1.0) for _ in self.named_classes]
+            total = sum(weights)
+            shares = {
+                name: weight / total * remaining
+                for name, weight in zip(self.named_classes, weights)
+            }
+            if all(
+                self.named_bounds.get(name, (0.0, 1.0))[0]
+                <= share / remaining
+                <= self.named_bounds.get(name, (0.0, 1.0))[1]
+                for name, share in shares.items()
+            ):
+                break
+        shares["ATTENTION"] = residual
+        return shares
 
     def provenance_summary(self) -> str:
         if not self.derives_from:
@@ -290,13 +348,33 @@ def load_profile(
     if not mix:
         raise CalibrationError(f"{path} declares no class_mix")
 
+    status = str(raw.get("status", "UNCALIBRATED"))
+    if status.upper() != "UNCALIBRATED" and not str(raw.get("interpretation", "")).strip():
+        raise CalibrationError(
+            f"{path} claims status {status!r} but records no `interpretation`. A profile "
+            "that cites sources without stating what it inferred from them is exactly the "
+            "failure this field exists to prevent."
+        )
+
     return CalibrationProfile(
         name=raw.get("name", name),
-        status=str(raw.get("status", "UNCALIBRATED")),
+        status=status,
         description=str(raw.get("description", "")),
         class_mix={
             key: (float(value[0]), float(value[1])) for key, value in mix.items()
         },
+        sampling=str(raw.get("sampling", "independent")),
+        named_classes=tuple(raw.get("named_classes") or ()),
+        named_bounds={
+            key: (float(value[0]), float(value[1]))
+            for key, value in (raw.get("named_bounds") or {}).items()
+        },
+        attention_share=(
+            (float(raw["attention_share"][0]), float(raw["attention_share"][1]))
+            if raw.get("attention_share")
+            else None
+        ),
+        issuer_outage=raw.get("issuer_outage") or {},
         derives_from=tuple(
             DerivedFigure(
                 source_file=str(item.get("source_file", "")),

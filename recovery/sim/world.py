@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 import yaml
@@ -97,6 +97,10 @@ class World:
     revocation_class_multiplier: Mapping[FailureClass, float]
     emission_fidelity: float
     remaining_lifetime_months: float
+    # Sourced issuer-outage distribution, carried through from the profile.
+    # Consumed by C11; recorded now so the sourced numbers are in the repo
+    # before the component that needs them exists.
+    issuer_outage: Mapping[str, Any] = field(default_factory=dict)
 
     def with_mandate_hazard(
         self, revocation_per_notification: float, fatigue_multiplier: float | None = None
@@ -128,22 +132,21 @@ class World:
         return min(1.0, base)
 
 
-def _resolve_class_mix(batch: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
-    """Profile name and the ranges it supplies.
+def _resolve_class_mix(batch: Mapping[str, Any]):
+    """The profile to sample from, or None when an inline override is in force.
 
     An inline `class_mix` overrides the profile and is reported as
     `inline-override` rather than borrowing a profile's name -- a result taken
     from an override has no provenance and must not appear to have one.
     """
     if batch.get("class_mix"):
-        return "inline-override", batch["class_mix"]
+        return None, batch["class_mix"]
     name = batch.get("calibration_profile")
     if not name:
         raise WorldConfigError(
             "batch needs either `calibration_profile` or an inline `class_mix`"
         )
-    profile = load_profile(str(name))
-    return profile.name, profile.class_mix
+    return load_profile(str(name)), {}
 
 
 def mandate_hazard_range(raw: Mapping[str, Any]) -> Range:
@@ -175,7 +178,8 @@ def sample_world(
     rng = random.Random(seed)
 
     batch = raw.get("batch") or {}
-    profile_name, class_mix_ranges = _resolve_class_mix(batch)
+    profile, class_mix_ranges = _resolve_class_mix(batch)
+    profile_name = profile.name if profile is not None else "inline-override"
     recovery_raw = raw.get("recovery") or {}
     link_raw = raw.get("link_conversion") or {}
     mandate = raw.get("mandate") or {}
@@ -203,9 +207,14 @@ def sample_world(
     return World(
         seed=seed,
         calibration_profile=profile_name,
+        issuer_outage=profile.issuer_outage if profile is not None else {},
         horizon_days=int(raw.get("horizon_days", 10)),
         batch_size=int(batch.get("size", 500)),
-        class_mix=_sample_mix(rng, class_mix_ranges, "batch.class_mix"),
+        class_mix=(
+            profile.sample_mix(rng)
+            if profile is not None
+            else _sample_mix(rng, class_mix_ranges, "batch.class_mix")
+        ),
         rail_mix=_sample_mix(rng, batch.get("rail_mix") or {}, "batch.rail_mix"),
         amount_paise=_as_range(batch.get("amount_paise"), "batch.amount_paise"),
         recovery=recovery,

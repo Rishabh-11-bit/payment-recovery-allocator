@@ -159,6 +159,26 @@ within-a-window? A customer who receives three failures in three days plausibly
 reacts differently from one who receives three across three months, and the
 current model does not distinguish them.
 
+### Under the calibrated profile
+
+Re-run under `bounded-2026`, which sweeps the LIQUIDITY/INFRASTRUCTURE/TERMINAL
+split across the full simplex instead of pinning it near a guessed point, the
+hazard **remains the dominant breaking condition under stress** — C loses 40% of
+worlds against A and 65% against B where the hazard is below ~0.010.
+
+Calibration also surfaced two conditions the narrower guessed mix had hidden:
+
+| Condition | Loss rate inside | Outside |
+|---|---|---|
+| `class_mix_INFRASTRUCTURE` above ~0.45 (nominal, vs A) | 26% of 39 worlds | 4% of 161 |
+| `class_mix_TERMINAL` below ~0.064 (stress, vs A) | 30% of 20 worlds | 7% of 180 |
+
+Both are mechanically obvious once visible, and neither could appear while the
+mix was pinned: where most failures are transient infrastructure faults, the
+baseline's blind retries work and C's conservatism costs; where almost nothing is
+TERMINAL, C's main advantage — not spending attempts where recovery is impossible
+— has little to work on.
+
 ### C8 found this parameter to be the result's breaking point
 
 The robustness sweep (300 sampled worlds, nominal and stress range sets) searched

@@ -48,3 +48,17 @@ The field exists so that judgement is written down next to the numbers it produc
 profile that cites sources without stating what it inferred from them is the failure mode
 this whole mechanism is meant to prevent: **an interpreted number presented as sourced is
 worse than an honest invention**, because an invention is labelled.
+
+
+## Profiles present
+
+| Profile | Status | Mix |
+|---|---|---|
+| `uncalibrated` | UNCALIBRATED | The original guess. `derives_from` empty, on purpose |
+| `bounded-2026` | BOUNDED | Split swept over the full simplex; issuer outage sourced from four NPCI months |
+
+Select one at runtime:
+
+```
+python -m recovery.reproduce --profile bounded-2026
+```

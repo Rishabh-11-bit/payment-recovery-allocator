@@ -12,6 +12,8 @@ no crossover reports that rather than hiding it.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from allocator.arm_c import ArmC
@@ -267,3 +269,94 @@ def test_a_batch_with_neither_profile_nor_mix_is_rejected():
     raw["batch"] = {k: v for k, v in raw["batch"].items() if k != "calibration_profile"}
     with pytest.raises(WorldConfigError, match="calibration_profile"):
         sample_world(seed=1, raw=raw)
+
+
+def test_bounded_profile_sweeps_the_full_simplex():
+    """The split is unavailable in published data, so it must not be pinned."""
+    import random
+
+    from recovery.calibration import load_profile
+
+    profile = load_profile("bounded-2026")
+    rng = random.Random(1)
+    mixes = [profile.sample_mix(rng) for _ in range(2000)]
+
+    for name in ("LIQUIDITY", "INFRASTRUCTURE", "TERMINAL"):
+        values = [m[name] for m in mixes]
+        assert min(values) < 0.10, f"{name} never gets a small share"
+        assert max(values) > 0.60, f"{name} never gets a large share"
+
+    # No preference between the three: Razorpay lists them in an order, and that
+    # order is weak ordinal evidence at most -- never a proportion.
+    medians = [
+        sorted(m[name] for m in mixes)[len(mixes) // 2]
+        for name in ("LIQUIDITY", "INFRASTRUCTURE", "TERMINAL")
+    ]
+    assert max(medians) - min(medians) < 0.03, medians
+
+
+def test_bounded_profile_mix_is_a_distribution():
+    import random
+
+    from recovery.calibration import load_profile
+
+    rng = random.Random(2)
+    for mix in (load_profile("bounded-2026").sample_mix(rng) for _ in range(200)):
+        assert abs(sum(mix.values()) - 1.0) < 1e-9
+        assert set(mix) == {"LIQUIDITY", "INFRASTRUCTURE", "TERMINAL", "ATTENTION"}
+
+
+def test_attention_is_bounded_because_no_source_speaks_to_it():
+    import random
+
+    from recovery.calibration import load_profile
+
+    profile = load_profile("bounded-2026")
+    low, high = profile.attention_share
+    rng = random.Random(3)
+    values = [profile.sample_mix(rng)["ATTENTION"] for _ in range(500)]
+    assert low <= min(values) and max(values) <= high
+
+
+def test_a_calibrated_profile_must_record_its_interpretation(tmp_path):
+    """Citing sources without saying what was inferred is the failure mode."""
+    import yaml
+
+    from recovery.calibration import CalibrationError, load_profile
+
+    data = yaml.safe_load(
+        pathlib.Path("config/calibration/bounded-2026.yaml").read_text(encoding="utf-8")
+    )
+    data.pop("interpretation")
+    (tmp_path / "broken.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(CalibrationError, match="interpretation"):
+        load_profile("broken", directory=tmp_path)
+
+
+def test_uncalibrated_profile_needs_no_interpretation():
+    """An honest invention is labelled and needs no justification."""
+    from recovery.calibration import load_profile
+
+    profile = load_profile("uncalibrated")
+    assert not profile.is_calibrated
+    assert profile.derives_from == ()
+
+
+def test_bounded_profile_carries_sourced_outage_figures():
+    from recovery.calibration import load_profile, read_downtime, summarise_downtime
+
+    profile = load_profile("bounded-2026")
+    outage = profile.issuer_outage
+    summary = summarise_downtime(read_downtime())
+
+    # Recomputable from data/, not transcribed. If the files change, these must.
+    assert outage["distinct_banks"] == summary.distinct_banks_normalised
+    assert outage["persistent"]["count"] == len(summary.appear_every_month)
+    assert outage["months_observed"] == len(summary.months)
+
+
+def test_world_carries_the_sourced_outage_through():
+    raw = load_world_config()
+    raw["batch"] = {**raw["batch"], "calibration_profile": "bounded-2026"}
+    world = sample_world(seed=1, raw=raw)
+    assert world.issuer_outage["persistent"]["count"] == 2

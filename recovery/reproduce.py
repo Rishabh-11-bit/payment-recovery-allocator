@@ -85,6 +85,12 @@ def main(
     db_path: pathlib.Path = typer.Option(
         pathlib.Path("data/reproduce.db"), "--db", help="Recreated from scratch on every run."
     ),
+    profile: str = typer.Option(
+        "",
+        "--profile",
+        help="Calibration profile for the failure mix. Defaults to whatever "
+        "config/worlds.yaml names. Try `bounded-2026`.",
+    ),
     sweep_worlds: int = typer.Option(
         100,
         "--sweep-worlds",
@@ -142,9 +148,9 @@ def main(
         typer.echo(f"    {event.seq:>3}  {marker:<36} {_detail(event.detail)}")
 
     passed = _c2_section(classifier) and passed
-    passed = _c5_section(config, classifier) and passed
+    passed = _c5_section(config, classifier, profile) and passed
     passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
-    passed = _c8_section(config, classifier, sweep_worlds) and passed
+    passed = _c8_section(config, classifier, sweep_worlds, profile) and passed
 
     store.close()
     typer.echo("\nreproduce: " + ("OK" if passed else "FAILED"))
@@ -202,7 +208,7 @@ def _c2_section(classifier) -> bool:
     )
 
 
-def _c8_section(config, classifier, worlds: int) -> bool:
+def _c8_section(config, classifier, worlds: int, profile: str = "") -> bool:
     """C8: sample the world space, report where the result breaks."""
     calendar = calendar_from_config(config.regulatory)
     arms = [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)]
@@ -219,7 +225,7 @@ def _c8_section(config, classifier, worlds: int) -> bool:
     passed = True
     named: set[str] = set()
     for label in ("nominal", "stress"):
-        raw = load_world_config()
+        raw = _world_config(profile)
         raw["batch"] = {**raw["batch"], "size": 200}
         if label == "stress":
             raw = stress_config(raw)
@@ -355,7 +361,15 @@ def _c7_section(config, classifier, tmp_dir, sequences: int) -> bool:
 SIM_SEED = 42
 
 
-def _c5_section(config, classifier) -> bool:
+def _world_config(profile: str) -> dict:
+    """World ranges, with the calibration profile overridden if one was named."""
+    raw = load_world_config()
+    if profile:
+        raw["batch"] = {**raw["batch"], "calibration_profile": profile}
+    return raw
+
+
+def _c5_section(config, classifier, profile: str = "") -> bool:
     """C3 + C5: three arms, one sampled world.
 
     Order matters. Cycle recovery first, because the bar asks for measured money
@@ -363,7 +377,8 @@ def _c5_section(config, classifier) -> bool:
     crossover, because one cycle is the wrong unit for judging an arm that
     deliberately trades cycle recovery for mandate survival.
     """
-    world = sample_world(seed=SIM_SEED)
+    raw = _world_config(profile)
+    world = sample_world(seed=SIM_SEED, raw=raw)
     calendar = calendar_from_config(config.regulatory)
     arms = [ArmA(calendar), ArmB(calendar), ArmC(calendar, classifier, config)]
     result = run_comparison(arms, world, calendar, costs=classifier.config.costs)
