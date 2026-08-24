@@ -85,6 +85,36 @@ guard:
   #                                  is conflated; subtract our own contacts
   execution_counter: system_initiated
 
+# --- Storm governor (C11) ---------------------------------------------------
+# Regulatory basis: NPCI directs PSPs to initiate executions at moderated TPS
+# and may apply rate limiters to avoid spikes. Scheduling T+1 for every failure
+# in a batch produces exactly that spike, aimed at whichever issuer caused it.
+#
+# There is deliberately NO list of issuers here, and there never should be.
+# Outages rotate -- 12 of 25 banks in the NPCI data appear in exactly one month,
+# and the second persistent bank looked fine in April and was five times worse
+# by June (CHALLENGES 011). A list built from any one month misses the bank that
+# is on its way down. The ceiling is a function of observed conditions instead.
+governor:
+  window_hours: 24
+  # Executions admitted per issuer per window, by observed condition.
+  base_ceiling: 50
+  strained_ceiling: 20
+  degraded_ceiling: 5
+  # Below this many observations an issuer is not measured, and "no evidence"
+  # is not treated as "healthy".
+  min_observations: 10
+  # Fallbacks, used only when no sourced outage distribution is supplied.
+  strained_failure_share: 0.156
+  degraded_failure_share: 0.530
+  # Multiplier applied to the NPCI-published outage shares to get failure-share
+  # thresholds. Outage share is time-down; failure share is attempts-failed, and
+  # they are not the same quantity -- this is the acknowledged fudge between
+  # them, kept explicit rather than buried in a constant.
+  sourced_multiplier: 20
+  # Spread scheduled executions across this many minutes, forward only.
+  jitter_minutes: 45
+
 # Consumed by C4 (guard). Recorded here from day one so the NPCI constants live
 # in config rather than in code. NOT read by C1.
 regulatory:

@@ -94,6 +94,32 @@ class GuardConfig(_Strict):
         return value
 
 
+class GovernorConfig(_Strict):
+    """No issuer list, by design. See CHALLENGES 011."""
+
+    window_hours: Annotated[int, Field(gt=0)]
+    base_ceiling: Annotated[int, Field(gt=0)]
+    strained_ceiling: Annotated[int, Field(gt=0)]
+    degraded_ceiling: Annotated[int, Field(gt=0)]
+    min_observations: Annotated[int, Field(gt=0)]
+    strained_failure_share: Annotated[float, Field(gt=0, le=1)]
+    degraded_failure_share: Annotated[float, Field(gt=0, le=1)]
+    sourced_multiplier: Annotated[float, Field(gt=0)]
+    jitter_minutes: Annotated[int, Field(ge=0)]
+
+    @field_validator("degraded_ceiling")
+    @classmethod
+    def _tighter_when_worse(cls, value: int, info) -> int:
+        strained = info.data.get("strained_ceiling")
+        base = info.data.get("base_ceiling")
+        if strained is not None and base is not None and not value <= strained <= base:
+            raise ValueError(
+                "ceilings must tighten as conditions worsen: "
+                "degraded <= strained <= base"
+            )
+        return value
+
+
 class RegulatoryConfig(_Strict):
     """Consumed by C4. Recorded from day one so the NPCI constants live in config."""
 
@@ -116,6 +142,7 @@ class Config(_Strict):
     policy: PolicyConfig
     allocator: AllocatorConfig
     guard: GuardConfig
+    governor: GovernorConfig
     database: DatabaseConfig
     ingest: IngestConfig
     worker: WorkerConfig

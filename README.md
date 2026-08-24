@@ -2,9 +2,10 @@
 
 Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
 
-**Status:** Phase 2 — C1 event core, C2 classifier, C3 allocator, C4 guard, C5 simulator with
-all three arms, C6 audit ledger, C7 property invariants, C8 robustness sweep, C9 calibration.
-Cost-matrix values still stubbed. C10–C12 not built.
+**Status:** Phase 3 — all twelve components built. C1 event core, C2 classifier, C3 allocator,
+C4 guard, C5 simulator and three arms, C6 audit ledger, C7 property invariants, C8 robustness
+sweep, C9 calibration, C10 rail actions, C11 storm governor, C12 holdout harness.
+Cost-matrix values remain stubbed.
 
 ---
 
@@ -181,6 +182,54 @@ distinct banks of which two — Central Bank of India and Punjab National Bank �
 every month. It is deliberately **not** used to set the INFRASTRUCTURE share, because
 converting outage hours into a share of failures needs transaction volume during outage
 windows that no file provides.
+
+**C10 — rail actions.** Executes the shaping the allocator emits, on a recovery Payment
+Link. This is the **out-of-session** case and that boundary is the point: Optimizer
+already does in-session fallback routing, so nothing here competes with it. This is the
+link sent *afterwards*, to a customer who has already gone — where there is no session
+to fall back within.
+
+Reorder promotes via `sequence` and removes nothing. Exclusion builds an allowlist
+(`show_default_blocks: false`) and is **gated to the HIGH band**, because excluding on a
+misdiagnosis leaves the customer without the method they would have used, on a page they
+already abandoned once. Reorder costs nothing if wrong; exclusion costs the recovery.
+
+`OFFER_RAIL_MIGRATION` builds an *offer* validated against the documented graph — manual
+charging of a domestic card is not supported, so there is no version that executes.
+
+**C11 — storm governor.** Jitter plus a per-issuer admission ceiling. Regulatory basis:
+NPCI directs PSPs to initiate executions at moderated TPS and may apply rate limiters.
+Scheduling T+1 for every failure in a batch produces exactly that spike, aimed at
+whichever issuer caused the batch to fail.
+
+**There is no issuer list, and a test enforces that there never is.** The NPCI data shows
+outages rotate — 12 of 25 banks appear in exactly one month — and the second persistent
+bank looked fine in April (1.67h) and was five times worse by June (9.40h). A blocklist
+built from April's data misses it. The ceiling is a function of observed conditions in a
+rolling window, so an issuer that degrades is throttled automatically and one that
+recovers is released without anyone editing a file.
+
+Thresholds come from the sourced outage distribution in `bounded-2026`, so "degraded"
+means *worse than what NPCI actually published*. Jitter is derived from the case key, not
+drawn at random: a retried worker must reschedule to the same slot or the audit trail
+stops reconstructing. It only ever moves forward, because moving earlier could cross the
+PDN lead time or walk into a peak window.
+
+**C12 — holdout harness.** A routing flag sending a stratified fraction of eligible cases
+to the documented baseline on real traffic, with uplift computed from realised outcomes.
+
+**Its value is the claim, not the code.** Every rupee figure here is simulated, and an
+uplift measured against a hand-written generator measures the ability to invert it. So
+magnitude is not claimed — and "we cannot measure magnitude on synthetic data, here is
+the instrument that would measure it on real volume" is only credible if the instrument
+exists.
+
+Assignment is a hash of the chain key and experiment name: no stored state, so a replayed
+webhook cannot move a case between arms mid-experiment, and assignment survives a restart
+because there is nothing to survive. Stratified by rail and failure class, because an
+unstratified 10% holdout can draw a TERMINAL-heavy control and make the treatment look
+good for reasons unrelated to the policy. Uplift is stratum-weighted rather than pooled,
+and the output states in as many words that it is **not** a significance test.
 
 **C6 — audit ledger.** A query surface over the append-only trail, and a decision trace.
 
