@@ -106,7 +106,10 @@ defensible profile is the point.** The single-world figure was always a draw, no
 A mandate is an annuity. An arm that recovers less now while keeping more mandates alive
 is ahead from some remaining lifetime onward, and that lifetime is the claim.
 
-Over **300 sampled worlds per range set**:
+At seed 42, swept across the hazard range: C overtakes B at **0.5–3.2 months**
+of remaining lifetime and A at **0.9–3.4 months**.
+
+Over **300 sampled worlds per range set**, which is the figure that counts:
 
 | | vs A | vs B |
 |---|---|---|
@@ -137,9 +140,9 @@ worst-case cost, because mistaking a recoverable failure for TERMINAL surrenders
 one payment while the reverse spends a capped execution *and* buys a failure
 notification.
 
-**Every simulated figure above is byte-identical to the run under the stub
-matrix.** Not approximately: the same win rates, the same crossover percentiles,
-the same breaking point.
+**Every reported figure above is identical to the run under the stub matrix.**
+Not approximately: the same win rates, the same crossover percentiles, the same
+breaking point, the same seed-42 table.
 
 That is the LOW row of the decision table doing exactly what it was designed to
 do. All four classes share one action at LOW confidence, so the class the cost
