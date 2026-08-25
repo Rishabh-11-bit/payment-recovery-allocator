@@ -94,9 +94,7 @@ class World:
     link_conversion: Mapping[FailureClass, float]
     revocation_per_notification: float
     fatigue_multiplier: float
-    revocation_class_multiplier: Mapping[FailureClass, float]
     emission_fidelity: float
-    remaining_lifetime_months: float
     # Sourced issuer-outage distribution, carried through from the profile.
     # Consumed by C11; recorded now so the sourced numbers are in the repo
     # before the component that needs them exists.
@@ -125,9 +123,14 @@ class World:
         Ordinal content: more notifications means more hazard, and the increase
         compounds. The magnitudes are swept, and no result may be quoted at a
         single point in that range.
+
+        Deliberately independent of failure class. A per-class multiplier was
+        tested and removed: flattening it to 1.0 changed no conclusion, so the
+        result never depended on it and it was an unsourced claim about customer
+        psychology earning nothing.
         """
+        del failure_class  # the hazard is class-independent; see ASSUMPTIONS.md
         base = self.revocation_per_notification
-        base *= self.revocation_class_multiplier[failure_class]
         base *= self.fatigue_multiplier ** max(0, notification_index - 1)
         return min(1.0, base)
 
@@ -237,24 +240,7 @@ def sample_world(
         fatigue_multiplier=_sample(
             rng, _as_range(mandate.get("fatigue_multiplier"), "mandate.fatigue_multiplier")
         ),
-        revocation_class_multiplier={
-            failure_class: _sample(
-                rng,
-                _as_range(
-                    (mandate.get("class_multiplier") or {})[failure_class.value],
-                    f"mandate.class_multiplier.{failure_class.value}",
-                ),
-            )
-            for failure_class in FailureClass
-        },
         emission_fidelity=_sample(
             rng, _as_range((raw.get("emission") or {}).get("fidelity"), "emission.fidelity")
-        ),
-        remaining_lifetime_months=_sample(
-            rng,
-            _as_range(
-                (raw.get("ltv") or {}).get("remaining_lifetime_months"),
-                "ltv.remaining_lifetime_months",
-            ),
         ),
     )

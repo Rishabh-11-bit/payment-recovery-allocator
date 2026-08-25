@@ -98,6 +98,52 @@ hour, to anyone.
 
 ---
 
+## Two consequences that need stating plainly
+
+### 1. Under Reading B, the LOW row's justification fails for an unknown fraction
+
+A DND-registered customer is **structurally uncontactable**. Not
+harder-to-reach — unreachable, as a matter of regulation.
+
+The LOW row of the decision table is uniform on the argument that a recovery link
+is the correct action *whichever cause is true*: bank outage, no funds, missed
+notification, dead card. That argument has a silent premise — **that the link
+reaches them.**
+
+For a DND-registered customer under Reading B it does not, and the reasoning
+collapses to nothing. The allocator would take no action at all on those cases: no
+execution, because the LOW row spends none, and no contact, because the contact
+cannot be sent. The cell that was designed to be the safe answer under uncertainty
+becomes the cell that does nothing.
+
+**The fraction affected is unknown and unmodelled.** Nothing in this repo models a
+preference register, so there is no estimate of how many customers this is — and
+it is not a small-print caveat, because the LOW row is where every unmapped and
+every genuinely ambiguous key lands. Under a taxonomy with gaps, that can be a
+large share of the batch.
+
+### 2. Under Reading B the system is non-compliant by construction
+
+`Guard._contact` has no time-of-day check. `recovery/guard.py`, `_contact()`
+checks exactly three things: the contact budget,
+the cooldown since the last contact, and that the moment is in the future. **There
+is no hour-of-day check anywhere in the contact path.**
+
+`ArmC._plan_contact` schedules at `now + 1 hour`, unconditionally. Whatever hour
+the worker happens to run, that is when the contact goes out.
+
+So if Reading B holds and promotional messaging is restricted to a daytime window,
+this system will send messages outside it — not occasionally, but as a matter of
+design, because nothing in the code is capable of preventing it. The peak-window
+check that exists applies to *mandate executions* under NPCI rules, and does not
+touch contacts.
+
+This is stated rather than fixed. Adding a window without knowing which window is
+guessing at the regulation, and a guess encoded in a guard is harder to notice than
+a gap in one.
+
+---
+
 ## What would change under Reading B
 
 **[INFERRED]** — my reading of the consequences, not a compliance assessment:

@@ -774,7 +774,85 @@ row that fails that check is telling you something the schema does not.
 
 ---
 
-## 013 — _(next entry)_
+## 013 — A label that inverted the meaning of the data
+
+**Date:** Phase 3
+**Tags:** `#evaluation` `#architecture`
+
+**Problem**
+`reproduce` prints a per-arm breakdown headed **"proposals blocked by the guard"**. It
+exists to keep one distinction visible: an arm that *wanted* to act and was refused is
+not the same as an arm that *chose* not to. That distinction is the whole reason the
+guard is separate from the allocator.
+
+Arm B showed 50 blocked. Arms A and C showed zero.
+
+The obvious reading is that Arm B — the contact-everything arm — is the one constantly
+running into the rules. It is a story that fits: B is the least disciplined arm, so of
+course it gets refused most.
+
+**Diagnosis**
+Every one of the 50 was Arm B *succeeding*.
+
+Arm B proposes two things per case per tick: a recovery link, and the baseline retry.
+When the link converts, the case closes — and the retry submitted immediately after
+arrives at a case that is no longer open. Of the 50: **45 followed the contact
+recovering the case**, and 5 followed the contact's notification triggering a
+revocation. Arms A and C emit at most one proposal per tick and cannot collide with
+themselves, which is why their count is zero.
+
+The mechanical error is one line. `Environment.submit` starts:
+
+    if not state.is_open:
+        metrics.record_rejection("case_not_open")
+        return False
+
+That returns **before the guard is ever consulted**. `case_not_open` is not a guard
+verdict and never was; it was being recorded through the same channel as one, and the
+display heading then asserted something about it that was false.
+
+So the number said "Arm B was blocked 50 times by the compliance layer" when it meant
+"Arm B resolved 45 cases so quickly its own follow-up became pointless."
+
+**Options**
+1. Stop submitting once a case closes within a tick — rejected, it makes the number go
+   away rather than making it correct, and loses the signal that B proposes redundant
+   work
+2. Rename the reason to `case_already_closed` and leave it in the same counter —
+   rejected, the count is still displayed under a heading about the guard
+3. Count it separately, report it on its own line, and pin the distinction with tests
+
+**Resolution**
+Option 3. `ArmMetrics.moot_proposals` is separate from `proposals_rejected`,
+`Environment.submit` calls `record_moot()` before the guard, and `reproduce` prints two
+lines rather than one. Two tests hold it: Arm B has moot proposals and no
+`case_not_open` rejection, and Arms A and C have zero moot proposals because they are
+structurally incapable of self-collision.
+
+**Why it mattered**
+**A wrong label is worse than a missing one**, and this is the clearest example of it I
+have hit. A missing number prompts "what happened here?" A number under a wrong heading
+prompts a confident conclusion, and here the confident conclusion was the exact inverse
+of the truth — the arm's best moments, presented as its constraint.
+
+It would have survived a demo, too. "Why is your contact-everything arm the only one
+getting blocked?" is a natural question with an obvious-sounding answer, and I would
+have given the wrong one fluently.
+
+The generalisable point is about where reporting bugs hide. This was not a calculation
+error: the count of 50 was correct, the events were correctly recorded, nothing was
+lost. The defect lived entirely in the *English* attached to the number — in a heading
+written when the counter had one meaning, and never revisited when the counter acquired
+a second. Aggregation is where semantics quietly go missing, because two things that
+increment the same integer become indistinguishable the moment they do.
+
+Worth noting how it was found: not by a test, but by reading the output and asking why
+one arm differed from the others. No assertion in the suite would ever have caught it,
+because every assertion was about the count, and the count was right.
+
+---
+
+## 014 — _(next entry)_
 
 **Date:**
 **Tags:**

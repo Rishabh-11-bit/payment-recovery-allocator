@@ -5,7 +5,8 @@ Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue 
 **Status:** Phase 3 — all twelve components built. C1 event core, C2 classifier, C3 allocator,
 C4 guard, C5 simulator and three arms, C6 audit ledger, C7 property invariants, C8 robustness
 sweep, C9 calibration, C10 rail actions, C11 storm governor, C12 holdout harness.
-The classifier's cost matrix and contact costs are authored.
+The classifier's cost matrix and contact costs are authored. `mandate.class_multiplier`
+was tested and deleted — see `ASSUMPTIONS.md`.
 
 ---
 
@@ -87,17 +88,17 @@ Mix drawn: INFRASTRUCTURE 48%, TERMINAL 36%, LIQUIDITY 10%, ATTENTION 6%.
 
 | arm | recovered ₹ | attempts | contacts | wasted attempts | wasted contacts |
 |---|---|---|---|---|---|
-| A | 153,351.63 | 1,174 | 0 | 597 | 0 |
-| B | 167,851.33 | 1,033 | 500 | 565 | 202 |
-| C | **113,941.57** | 369 | 308 | **37** | 189 |
+| A | 150,383.15 | 1,179 | 0 | 616 | 0 |
+| B | 158,111.30 | 1,053 | 500 | 584 | 209 |
+| C | **108,557.49** | 388 | 308 | **54** | 190 |
 
-A→B contact uplift ₹14,499.70. B→C ₹−53,909.76. **Arm C recovers less in one cycle, and
+A→B contact uplift ₹7,728.15. B→C ₹−49,553.81. **Arm C recovers less in one cycle, and
 that is the arm working as designed** — it withholds executions and contacts the other
-arms spend. Share of the capped budget spent where recovery was impossible: A 51%,
-B 55%, **C 10%**.
+arms spend. Share of the capped budget spent where recovery was impossible: A 52%,
+B 55%, **C 14%**.
 
 Switching from the guessed profile to the calibrated one moved Arm C's figure here from
-₹151,735 to ₹113,942. That is not a regression: seed 42 under `bounded-2026` draws
+₹151,735 to ₹108,557. That is not a regression: seed 42 under `bounded-2026` draws
 INFRASTRUCTURE at 48% and TERMINAL at 36% — a world where most failures are transient and
 retrying blindly works, so C should do badly. **Reporting the worse number under the more
 defensible profile is the point.** The single-world figure was always a draw, not a result.
@@ -107,21 +108,21 @@ defensible profile is the point.** The single-world figure was always a draw, no
 A mandate is an annuity. An arm that recovers less now while keeping more mandates alive
 is ahead from some remaining lifetime onward, and that lifetime is the claim.
 
-At seed 42, swept across the hazard range: C overtakes B at **0.5–3.2 months**
-of remaining lifetime and A at **0.9–3.4 months**.
+At seed 42, swept across the hazard range: C overtakes B at **0.6–6.5 months**
+of remaining lifetime and A at **0.9–5.3 months**.
 
 Over **300 sampled worlds per range set**, which is the figure that counts:
 
 | | vs A | vs B |
 |---|---|---|
-| C ahead by 6 months | 89% | 92% |
-| C ahead by 12 months | **93%** | **97%** |
+| C ahead by 6 months | 91% | 91% |
+| C ahead by 12 months | **93%** | **96%** |
 | C ahead by 24 months | 95% | 99% |
-| Crossover p10 / median / p90 | 0.2 / 1.5 / 7.5 months | 0.3 / 1.6 / 5.2 |
-| Ahead from the start | 139 worlds | 7 |
-| Never overtakes | 13 worlds | 3 |
+| Crossover p10 / median / p90 | 0.3 / 1.6 / 6.0 months | 0.5 / 1.7 / 5.5 |
+| Ahead from the start | 135 worlds | 10 |
+| Never overtakes | 11 worlds | 2 |
 
-Arm B wins cycle recovery in **93% of worlds**. Arm C's case is entirely the horizon, and
+Arm B wins cycle recovery in **95% of worlds**. Arm C's case is entirely the horizon, and
 that is stated rather than buried.
 
 **Mandate survival is reported as an ordering, never a count** — a count would rest on a
@@ -129,8 +130,8 @@ per-notification revocation rate nobody publishes. At seed 42: `C > A > B` at ev
 in the swept range, zero inversions.
 
 Halted and revoked are different exit doors: halted preserves mandate authority, revoked
-destroys it. C buys each avoided revocation with 2.0–4.8 additional halts against A and
-1.5–4.2 against B, swept across the hazard range. Whether that is a good trade depends on
+destroys it. C buys each avoided revocation with 2.0–6.0 additional halts against A and
+1.7–6.9 against B, swept across the hazard range. Whether that is a good trade depends on
 manual-recovery rates for halted subscriptions, which are not published.
 
 ### What the authored cost matrix changed: nothing, and that is the finding
@@ -161,8 +162,10 @@ class is a guess — that its answer is deliberately inert.
 Under the calibrated profile, **no parameter condition separates wins from losses inside
 the calibrated ranges**. Under stress ranges deliberately widened past calibration:
 
-> C loses where `revocation_per_notification` is below ~0.0103 — **40%** of those worlds
-> against A, **63%** against B, versus 3–4% elsewhere.
+> C loses where `revocation_per_notification` is below ~0.0103 — **33%** of those worlds
+> against A, **50%** against B, versus 2–7% elsewhere. A second condition clears the
+> reporting threshold against A: `class_mix_TERMINAL` below ~0.064, losing **30%** of
+> those worlds against 8% elsewhere.
 
 The mechanism is plain: if repeated failure notifications cost few mandates, protecting
 mandates buys little and contacting everyone wins. That parameter is the least evidenced

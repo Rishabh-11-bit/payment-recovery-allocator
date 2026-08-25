@@ -316,24 +316,71 @@ distinguish them.
 
 ---
 
-## `mandate.class_multiplier`
+## `mandate.class_multiplier` — DELETED
 
-**Classification:** CARDINAL — no source
-**Range:** INFRASTRUCTURE `[0.6, 0.9]`, LIQUIDITY `[1.1, 1.6]`,
-ATTENTION `[0.9, 1.2]`, TERMINAL `[0.8, 1.2]`
+**Status:** removed from `config/worlds.yaml` and from `World`. Recorded here
+because deleting a parameter is a result, and a reader who finds it in the git
+history should find the reason too.
 
-**[INFERRED]** — the reasoning as I understand it: being told repeatedly that you have
-no money is a worse message to receive than a technical decline, so LIQUIDITY carries
-a higher revocation multiplier. That is a claim about customer psychology with no
-observable ground truth behind it, and it is uncomfortably close to the goodwill
-scoring rejected in `NOT_BUILT.md`.
+### What it was
 
-The mitigating difference is that this sits in the *simulator*, which is allowed
-cardinal values, and never in the policy. But it is worth knowing that the
-mandate-survival result leans on an unsourced psychological asymmetry as well as on an
-unsourced hazard rate.
+A per-class multiplier on the revocation hazard, encoding that being told
+repeatedly you have no money is a worse message to receive than a technical
+decline: INFRASTRUCTURE `[0.6, 0.9]`, LIQUIDITY `[1.1, 1.6]`, ATTENTION
+`[0.9, 1.2]`, TERMINAL `[0.8, 1.2]`.
 
----
+### Why it was suspect
+
+It is a claim about customer psychology with **no observable ground truth** —
+nothing in any available data records how a customer felt about a notification.
+That is the same objection that puts goodwill scoring in `NOT_BUILT.md`. The
+defence was that it lived in the simulator, which is permitted cardinal values,
+and never in the policy. That defence is real but thin: the mandate-survival
+result would still have leaned on an unsourced psychological asymmetry *in
+addition to* an unsourced hazard rate.
+
+### The test
+
+Every multiplier set to `1.0` — no asymmetry at all — and the seed-42 crossover
+and the full 300-world sweep re-run against the version with it.
+
+| | With multiplier | Flat 1.0 |
+|---|---|---|
+| C ahead of A @12mo, nominal | 93% | **93%** |
+| C ahead of B @12mo, nominal | 97% | **96%** |
+| Crossover median vs A | 1.5 mo | 1.6 mo |
+| Crossover median vs B | 1.6 mo | 1.7 mo |
+| Dominance ordering | `C > A > B`, 0 inversions | **`C > A > B`, 0 inversions** |
+| Stress breaking point | revocation hazard | **revocation hazard** |
+
+### The result, and why it justified deletion
+
+**The crossover survives with no psychological asymmetry.** Win rates move by at
+most a point, the dominance ordering is unchanged with zero inversions, and the
+breaking point stays on the revocation hazard.
+
+So the claim never rested on it. A parameter that changes no conclusion but adds
+an unsourced assumption is strictly worse than no parameter: it widens the
+surface a reviewer can attack while buying nothing. **The result is stronger
+without it** — the mandate-survival argument now leans on exactly one unsourced
+cardinal (`revocation_per_notification`) rather than two, and that one is swept
+and reported only as an ordering.
+
+The hazard is now class-independent by construction, and `World.revocation_hazard`
+discards the class argument with a comment saying why.
+
+### What the deletion did change
+
+Two second-order effects, both stated rather than smoothed over:
+
+- **Reported figures moved slightly.** Every number in the README is regenerated
+  under the flat model. Arm C's seed-42 recovery moved from ₹113,942 to ₹108,557,
+  and the seed-42 crossover band widened from 0.5–3.2 to 0.6–6.5 months vs B.
+- **A second breaking condition surfaced under stress vs A**:
+  `class_mix_TERMINAL` below ~0.064, losing 30% of those worlds against 8%
+  elsewhere. It was present before but sat below the reporting threshold; with
+  the hazard's effect no longer amplified for LIQUIDITY, it clears it. That is
+  the sweep finding something real, not the deletion breaking something.
 
 ## `emission.fidelity`
 

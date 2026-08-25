@@ -359,6 +359,9 @@ FORBIDDEN_ATTRIBUTES = frozenset(
         "recovery_curve",
         "fatigue_multiplier",
         "emission_fidelity",
+        # Removed from the world in favour of an explicit horizon sweep. The
+        # name stays on the forbidden list so reintroducing it as a policy input
+        # is still caught.
         "remaining_lifetime_months",
     }
 )

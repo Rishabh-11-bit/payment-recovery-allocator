@@ -92,13 +92,13 @@ mandate:
   revocation_per_notification: [0.010, 0.045]
   # Multiplier applied per notification after the first: notification fatigue.
   fatigue_multiplier: [1.15, 1.60]
-  # A customer whose failure is LIQUIDITY is being told they are broke, which
-  # is a worse message to receive repeatedly than a technical decline.
-  class_multiplier:
-    INFRASTRUCTURE: [0.6, 0.9]
-    LIQUIDITY:      [1.1, 1.6]
-    ATTENTION:      [0.9, 1.2]
-    TERMINAL:       [0.8, 1.2]
+  # NOTE: there was a per-class multiplier here, encoding "being told you are
+  # broke repeatedly is worse than a technical decline". It was DELETED after
+  # testing whether the result needed it. Setting every multiplier to 1.0 left
+  # the crossover intact, the dominance ordering unchanged and the breaking
+  # point in the same place -- so the claim never rested on it, and carrying an
+  # unsourced claim about customer psychology that changes no conclusion is
+  # strictly worse than not carrying it. See ASSUMPTIONS.md.
 
 # --- Classifier observability ----------------------------------------------
 # How cleanly the true class shows up in the emitted payload. At 1.0 the
@@ -108,12 +108,11 @@ mandate:
 emission:
   fidelity: [0.75, 0.95]
 
-# --- LTV sensitivity --------------------------------------------------------
-# NOT used to produce a headline figure. Reported only as a sensitivity across
-# this range: "at 6 months, Rs X; at 12 months, Rs Y". A single number here
-# would be a cardinal claim dressed as a result.
-ltv:
-  remaining_lifetime_months: [6, 18]
+# NOTE: there is deliberately no `ltv:` block. Remaining subscription lifetime
+# was sampled here and never consumed -- the horizon analysis sweeps 1 to 24
+# months explicitly and reports the crossover, so a sampled band was dead weight
+# that looked like an input. A parameter nobody reads is worse than a missing
+# one: it implies the result depends on something it does not.
 
 # =============================================================================
 # STRESS RANGES -- deliberately wider than calibration, for C8's breaking-point
