@@ -174,7 +174,11 @@ class Environment:
         """
         state = self.cases[proposal.case_id]
         if not state.is_open:
-            metrics.record_rejection("case_not_open")
+            # Not a guard block -- this never reaches the guard. The case
+            # resolved between the arm proposing and the proposal being
+            # submitted, which for a multi-action arm usually means its own
+            # earlier action worked.
+            metrics.record_moot()
             return False
 
         if proposal.kind is ActionKind.ATTEMPT:

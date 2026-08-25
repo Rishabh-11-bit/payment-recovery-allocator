@@ -64,9 +64,19 @@ class ArmMetrics:
     cases_recovered: int = 0
     proposals_rejected: int = 0
     rejection_reasons: dict[str, int] = field(default_factory=dict)
+    # Proposals that never reached the guard because the case had already
+    # resolved. Counted separately from guard blocks on purpose: an arm whose
+    # own contact recovered a case and then offered a now-pointless retry was
+    # succeeding, not being constrained, and pooling the two makes the arm look
+    # held back by the exact action that worked.
+    moot_proposals: int = 0
     attempts_by_class: dict[str, int] = field(default_factory=dict)
     contacts_by_class: dict[str, int] = field(default_factory=dict)
     contact_cost_incurred: float = 0.0
+
+    def record_moot(self) -> None:
+        """The case resolved before this proposal was submitted."""
+        self.moot_proposals += 1
 
     def record_rejection(self, reason: str) -> None:
         head = reason.split(":", 1)[0]

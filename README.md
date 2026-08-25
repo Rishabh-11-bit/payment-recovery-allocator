@@ -5,7 +5,7 @@ Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue 
 **Status:** Phase 3 — all twelve components built. C1 event core, C2 classifier, C3 allocator,
 C4 guard, C5 simulator and three arms, C6 audit ledger, C7 property invariants, C8 robustness
 sweep, C9 calibration, C10 rail actions, C11 storm governor, C12 holdout harness.
-Cost-matrix values remain stubbed.
+The classifier's cost matrix and contact costs are authored.
 
 ---
 
@@ -128,6 +128,29 @@ Halted and revoked are different exit doors: halted preserves mandate authority,
 destroys it. C buys each avoided revocation with 2.0–4.8 additional halts against A and
 1.5–4.2 against B, swept across the hazard range. Whether that is a good trade depends on
 manual-recovery rates for halted subscriptions, which are not published.
+
+### What the authored cost matrix changed: nothing, and that is the finding
+
+Authoring the cost matrix moved the LOW-band resolution from ATTENTION to
+TERMINAL — under the authored asymmetry, predicting TERMINAL has the lowest
+worst-case cost, because mistaking a recoverable failure for TERMINAL surrenders
+one payment while the reverse spends a capped execution *and* buys a failure
+notification.
+
+**Every simulated figure above is byte-identical to the run under the stub
+matrix.** Not approximately: the same win rates, the same crossover percentiles,
+the same breaking point.
+
+That is the LOW row of the decision table doing exactly what it was designed to
+do. All four classes share one action at LOW confidence, so the class the cost
+model resolves to never reaches a branch. The cost model changes what the audit
+trail *records* about an uncertain case and cannot change what is *done* about
+one — which is what "the LOW row is uniform by design" means when it is load
+bearing rather than decorative.
+
+The cost matrix still binds at MODERATE and HIGH, where the class does select
+the cell. It is only under LOW — the band that exists precisely because the
+class is a guess — that its answer is deliberately inert.
 
 ### Where it breaks
 

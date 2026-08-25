@@ -309,3 +309,44 @@ def test_environment_uses_the_guard_it_is_given(config, calendar):
     supplied = guard_from_config(config, calendar)
     environment = Environment(sample_world(seed=1), [], calendar, guard=supplied)
     assert environment.guard is supplied
+
+
+def test_a_resolved_case_is_moot_not_guard_blocked(config, classifier, calendar):
+    """A multi-action arm whose first action worked was succeeding, not blocked.
+
+    Arm B proposes a contact and a retry in the same tick. When the contact
+    converts, the case closes and the retry is pointless -- but it never reaches
+    the guard, so counting it as a guard block would report the arm as
+    constrained by the exact action that worked.
+    """
+    from recovery.sim.arms import ArmB
+    from recovery.sim.batch import generate_batch
+    from recovery.sim.metrics import ArmMetrics
+    from recovery.sim.run import run_arm
+    from recovery.sim.world import load_world_config, sample_world
+
+    raw = load_world_config()
+    raw["batch"] = {**raw["batch"], "size": 250}
+    world = sample_world(seed=42, raw=raw)
+
+    metrics = run_arm(
+        ArmB(calendar), world, calendar, costs=classifier.config.costs
+    )
+    assert metrics.moot_proposals > 0, "Arm B should resolve some cases mid-tick"
+    assert "case_not_open" not in metrics.rejection_reasons
+
+
+def test_single_action_arms_have_no_moot_proposals(config, classifier, calendar):
+    """A and C emit at most one proposal per tick, so cannot collide with themselves."""
+    from allocator.arm_c import ArmC
+    from recovery.sim.arms import ArmA
+    from recovery.sim.run import run_arm
+    from recovery.sim.world import load_world_config, sample_world
+
+    raw = load_world_config()
+    raw["batch"] = {**raw["batch"], "size": 150}
+    world = sample_world(seed=42, raw=raw)
+
+    for arm in (ArmA(calendar), ArmC(calendar, classifier, config)):
+        metrics = run_arm(arm, world, calendar, costs=classifier.config.costs)
+        assert metrics.moot_proposals == 0, arm.name
