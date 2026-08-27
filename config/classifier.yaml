@@ -52,6 +52,35 @@ source_space:
 #   Example, if it were ever justified:  {razorpay: internal}
 source_aliases: {}
 
+# --- Step space -------------------------------------------------------------
+# Also a lower bound, and assembled from three places: the steps named by rules
+# in this file, the step table in CLAUDE.md, and the two below that are
+# documented but carry no rule yet. UPI exposes roughly fourteen steps and this
+# does not list them all.
+#
+# **This validates rules, not payloads.** A payload carrying a step outside the
+# space classifies normally -- the same lower-bound rule as `source_space`. What
+# it catches is a rule that names a step this project has never seen: a typo in
+# a `match` block produces a row that silently never fires, and a dead row looks
+# exactly like a present one from anywhere except the matcher. Load fails
+# instead.
+#
+# `customer_onboarding` and `account_management` are here with no rule attached.
+# That is the point of recording them: they are steps that exist, and when a row
+# is eventually written for one it will validate rather than be rejected.
+step_space:
+  card: [payment_initiation, payment_creation, payment_authentication,
+         payment_authorization, card_enrollment_check,
+         customer_onboarding, account_management]
+  upi: [payment_initiation, payment_creation, payment_authentication,
+        payment_authorization, payment_debit_response, mandate_creation,
+        customer_onboarding, account_management]
+  netbanking: [payment_initiation, payment_creation, payment_authentication,
+               payment_authorization, customer_onboarding, account_management]
+  emandate: [payment_initiation, payment_creation, payment_authentication,
+             payment_authorization, payment_debit_response, mandate_creation,
+             customer_onboarding, account_management]
+
 # --- Confidence -------------------------------------------------------------
 # Confidence is an output of classification, not a footnote on it. The bands
 # are what downstream components branch on:
@@ -280,3 +309,118 @@ rules:
       Same reasoning as the card row. Note `source: bank` — the undocumented
       value found in the captures and added to the value space on that evidence
       rather than on the reference. See CHALLENGES 007.
+
+# --- Mandate-registration rows ----------------------------------------------
+# AUTHORED. **Unreachable from the current ingest**, and marked so in the file
+# rather than left for a reader to work out.
+#
+# `payment.failed` is not triggered on an authorisation failure, and mandate
+# registration fails at authorisation. So no event this system consumes carries
+# these keys, and no batch figure moves when they are added. They are here for
+# taxonomy completeness: the classifier's job is to have an answer for a key
+# that exists, not only for a key that currently arrives.
+#
+# Reaching them needs `subscription.pending` ingestion, which is deliberately
+# not built -- registration drop-off is Intelligent Retry Engine's territory,
+# and duplicating a shipped product is the mistake CHALLENGES 001 records. It is
+# listed in NOT_BUILT.md as a leak identified and not addressed.
+#
+# They match on `reason` alone. Registration failures are not method-specific in
+# any way the reason codes distinguish, and a method constraint would be scope
+# invented rather than authored.
+
+  - match: {reason: mandate_creation_declined}
+    class: TERMINAL
+    confidence: 0.85
+    cause_family: mandate_registration
+    unreachable: true
+    note: >-
+      The bank refused registration. There is no mandate to retry against --
+      not a failed debit but the absence of the thing a debit would execute
+      on. Distinct from `mandate_revoked`, where a mandate existed and stopped.
+
+  - match: {reason: mandate_creation_expired}
+    class: ATTENTION
+    confidence: 0.80
+    cause_family: mandate_registration
+    unreachable: true
+    note: >-
+      The customer did not complete registration in time. ATTENTION rather than
+      TERMINAL because the customer is reachable and willing -- they started.
+      What it needs is a registration link, not a retry; there is nothing to
+      retry.
+
+  - match: {reason: mandate_creation_failed}
+    class: INFRASTRUCTURE
+    confidence: 0.50
+    cause_family: mandate_registration
+    deliberately_low_confidence: true
+    unreachable: true
+    note: >-
+      Generic. It is the bucket registration uses when it cannot say which of
+      the three rows above happened, so it is consistent with all of them.
+      INFRASTRUCTURE is the most plausible reading and 0.50 is the honest
+      confidence in it.
+
+  - match: {reason: mandate_creation_timeout}
+    class: INFRASTRUCTURE
+    confidence: 0.75
+    cause_family: mandate_registration
+    unreachable: true
+    note: "Transient failure at registration. The one row here that a repeat attempt fixes."
+
+# --- Funds committed elsewhere ----------------------------------------------
+# AUTHORED. Reachable, but the simulator does not emit either key, so these
+# change no reported figure either.
+#
+# `funds_committed` is a separate family from `funding` on purpose. Both are
+# LIQUIDITY and both recover with time, but they are different facts: `funding`
+# is an empty account, `funds_committed` is a full one whose balance is held by
+# another mandate. The second has a release date. The first does not.
+
+  - match: {reason: funds_blocked_by_mandate}
+    class: LIQUIDITY
+    confidence: 0.88
+    cause_family: funds_committed
+    note: >-
+      The funds exist and are held by another mandate. Time-dependent rather
+      than absent, which is the strongest case in the taxonomy for waiting: the
+      block has an end, and retrying before it does spends an execution against
+      a lien that is still in force.
+
+  - match: {reason: insufficient_funds_mandate_block}
+    class: LIQUIDITY
+    confidence: 0.88
+    cause_family: funds_committed
+    note: >-
+      Same reasoning. The reason code reads like `insufficient_funds` and is
+      not the same fact -- the balance is present and committed, not missing.
+      Classifying it as plain funding would lose the release date.
+
+# --- PSP capability ---------------------------------------------------------
+# AUTHORED. TERMINAL for a reason no other TERMINAL row shares: the failure is
+# a property of the *app*, not of the instrument, the mandate or the account.
+
+  - match: {reason: upi_autopay_not_supported_on_psp}
+    class: TERMINAL
+    confidence: 0.95
+    cause_family: psp_capability
+    note: >-
+      Autopay never works on this PSP, so every remaining execution against it
+      fails identically -- P(retry succeeds) = 0, the same basis as the expired
+      card. But a different app would work, which no other TERMINAL row can
+      say. The remedy is rail migration or a different handle, not a card
+      change and not a link.
+
+# --- Acknowledgement ---------------------------------------------------------
+
+  - match: {reason: reqauth_mandate_not_acknowledged}
+    class: ATTENTION
+    confidence: 0.70
+    cause_family: acknowledgement
+    note: >-
+      The customer was asked to acknowledge and did not. Squarely ATTENTION:
+      they were reached, the ask landed, and nothing came back. Retrying the
+      same ask through the same channel is the definition of no marginal value.
+      MODERATE rather than HIGH because silence does not say whether they saw
+      it and declined or never saw it.

@@ -90,13 +90,25 @@ def test_empty_match_is_rejected(tmp_path):
 
 
 def test_ambiguous_rules_are_rejected_at_load(tmp_path):
-    """Equal specificity, overlapping, disagreeing -- a coin toss at runtime."""
+    """Equal precedence, overlapping, disagreeing -- a coin toss at runtime.
+
+    Equal *precedence* now, not equal specificity. Precedence is decided by
+    which fields a rule names rather than how many, so two rules tie only when
+    they name the same field set -- and then overlapping means identical
+    constraints. That is a narrower net than the old field-count rule caught,
+    and deliberately so: the pairs it stopped catching are the ones the
+    informativeness order now resolves deterministically. See the test below.
+    """
     path = write_config(
         tmp_path,
         rules=[
-            {"match": {"method": "upi", "step": "s"}, "class": "LIQUIDITY", "confidence": 0.9},
             {
-                "match": {"method": "upi", "source": "customer"},
+                "match": {"method": "upi", "step": "payment_initiation"},
+                "class": "LIQUIDITY",
+                "confidence": 0.9,
+            },
+            {
+                "match": {"method": "upi", "step": "payment_initiation"},
                 "class": "TERMINAL",
                 "confidence": 0.9,
             },
@@ -106,11 +118,50 @@ def test_ambiguous_rules_are_rejected_at_load(tmp_path):
         load_classifier(path, allow_stub=True)
 
 
+def test_different_field_sets_are_resolved_rather_than_rejected(tmp_path):
+    """What the precedence change bought, stated as a behaviour.
+
+    `{method, step}` and `{method, source}` both name two fields and can both
+    match one key. Under field-count ordering that was a tie and therefore a
+    load error. It is not a tie: `step` localises better than `source`, so the
+    step rule wins, deterministically and by a declared order.
+
+    The cost is honest -- this pair no longer raises, so an author who wrote
+    them expecting a warning gets a silent resolution instead. The gain is that
+    a rule naming only `reason` can win against a broader one, which is what
+    the mandate-registration rows need to fire at all.
+    """
+    path = write_config(
+        tmp_path,
+        rules=[
+            {
+                "match": {"method": "upi", "step": "payment_initiation"},
+                "class": "LIQUIDITY",
+                "confidence": 0.9,
+            },
+            {
+                "match": {"method": "upi", "source": "customer"},
+                "class": "TERMINAL",
+                "confidence": 0.9,
+            },
+        ],
+    )
+    classifier = load_classifier(path, allow_stub=True)
+    key = NormalizedFailure(
+        method="upi", source="customer", step="payment_initiation", reason="r"
+    )
+    assert classifier.classify(key).failure_class is FailureClass.LIQUIDITY
+
+
 def test_overlapping_rules_that_agree_are_allowed(tmp_path):
     path = write_config(
         tmp_path,
         rules=[
-            {"match": {"method": "upi", "step": "s"}, "class": "LIQUIDITY", "confidence": 0.9},
+            {
+                "match": {"method": "upi", "step": "payment_initiation"},
+                "class": "LIQUIDITY",
+                "confidence": 0.9,
+            },
             {
                 "match": {"method": "upi", "source": "customer"},
                 "class": "LIQUIDITY",

@@ -294,10 +294,10 @@ def _c8_section(config, classifier, worlds: int, profile: str = "") -> bool:
             "    The verified 300-world run found: C loses where"
         )
         typer.echo(
-            "    revocation_per_notification is below ~0.010-0.014 (47-60% loss rate"
+            "    revocation_per_notification is below ~0.010-0.014 (33-57% loss rate"
         )
         typer.echo(
-            "    there, against 2-4% elsewhere). Rerun with --sweep-worlds 300."
+            "    there, against 6-13% elsewhere). Rerun with --sweep-worlds 300."
         )
     typer.echo("")
     return passed

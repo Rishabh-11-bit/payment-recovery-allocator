@@ -94,6 +94,29 @@ misdiagnosis makes recovery harder. A LOW band discards the predicted class and 
 the cost matrix which class has the lowest worst-case cost of being wrong — the
 cheaper error, not the more likely class.
 
+**Precedence is decided by which field a rule names, not how many.** `reason` outranks
+`step`, which outranks `source`, which outranks `method` — so a rule naming only the
+cause beats one naming the rail and the flow step. Counting named fields instead, which
+is what this did until the mandate-registration rows were added, inverts that: the more
+specific claim loses, the row never fires, and nothing says so. It is present, valid and
+dead. `python -m recovery.coverage` reports which rows are unreachable, and the loader
+rejects a rule naming a step outside `step_space` — a typo there produces exactly the
+same silent dead row.
+
+**Four rows are unreachable on purpose.** The `mandate_creation_*` rows classify
+registration failures, and `payment.failed` is not triggered on an authorisation
+failure — which is where mandate registration fails. So no event this system ingests can
+produce those keys. They are marked `unreachable: true`, excluded from the coverage
+argument, and kept because the classifier's job is to have an answer for a key that
+exists rather than only for one that currently arrives.
+
+Reaching them would need `subscription.pending` ingestion, and **a second ingest is
+deliberately not built**. Registration drop-off is Razorpay's Intelligent Retry Engine's
+territory, and duplicating a shipped product is the mistake `CHALLENGES.md` 001 exists to
+record. It is listed in `NOT_BUILT.md` under revenue leaks identified and not addressed —
+named rather than quietly skipped, because "we did not look" and "we looked and chose not
+to" are different statements and only the second is a position.
+
 **C5 + C3 — simulator and three arms.** A synthetic mandate-debit batch with a rail
 dimension (Card / UPI / Emandate). Every cardinal value is sampled from a range, never
 fixed. Ground truth is hidden: arms see only the emitted payload, and emission is
@@ -108,17 +131,17 @@ Mix drawn: INFRASTRUCTURE 48%, TERMINAL 36%, LIQUIDITY 10%, ATTENTION 6%.
 
 | arm | recovered ₹ | attempts | contacts | wasted attempts | wasted contacts |
 |---|---|---|---|---|---|
-| A | 150,383.15 | 1,179 | 0 | 616 | 0 |
-| B | 158,111.30 | 1,053 | 500 | 584 | 209 |
-| C | **108,557.49** | 388 | 308 | **54** | 190 |
+| A | 154,404.17 | 1,184 | 0 | 615 | 0 |
+| B | 166,523.20 | 1,057 | 500 | 603 | 209 |
+| C | **108,508.36** | 387 | 308 | **55** | 190 |
 
-A→B contact uplift ₹7,728.15. B→C ₹−49,553.81. **Arm C recovers less in one cycle, and
+A→B contact uplift ₹12,119.03. B→C ₹−58,014.84. **Arm C recovers less in one cycle, and
 that is the arm working as designed** — it withholds executions and contacts the other
 arms spend. Share of the capped budget spent where recovery was impossible: A 52%,
-B 55%, **C 14%**.
+B 57%, **C 14%**.
 
 Switching from the guessed profile to the calibrated one moved Arm C's figure here from
-₹151,735 to ₹108,557. That is not a regression: seed 42 under `bounded-2026` draws
+₹143,135 to ₹108,508. That is not a regression: seed 42 under `bounded-2026` draws
 INFRASTRUCTURE at 48% and TERMINAL at 36% — a world where most failures are transient and
 retrying blindly works, so C should do badly. **Reporting the worse number under the more
 defensible profile is the point.** The single-world figure was always a draw, not a result.
@@ -128,8 +151,8 @@ defensible profile is the point.** The single-world figure was always a draw, no
 A mandate is an annuity. An arm that recovers less now while keeping more mandates alive
 is ahead from some remaining lifetime onward, and that lifetime is the claim.
 
-At seed 42, swept across the hazard range: C overtakes B at **0.6–6.5 months**
-of remaining lifetime and A at **0.9–5.3 months**.
+At seed 42, swept across the hazard range: C overtakes B at **1.2–9.1 months**
+of remaining lifetime and A at **1.9–6.7 months**.
 
 **For fixed-count subscriptions the horizon is not an assumption at all.**
 `remaining_count` is on every subscription payload, so remaining lifetime is *known*
@@ -141,15 +164,24 @@ Over **300 sampled worlds per range set**, which is the figure that counts:
 
 | | vs A | vs B |
 |---|---|---|
-| C ahead by 6 months | 91% | 91% |
-| C ahead by 12 months | **93%** | **96%** |
-| C ahead by 24 months | 95% | 99% |
-| Crossover p10 / median / p90 | 0.3 / 1.6 / 6.0 months | 0.5 / 1.7 / 5.5 |
-| Ahead from the start | 135 worlds | 10 |
-| Never overtakes | 11 worlds | 2 |
+| C ahead by 6 months | 79% | 78% |
+| C ahead by 12 months | **83%** | **90%** |
+| C ahead by 24 months | 87% | 95% |
+| Crossover p10 / median / p90 | 0.3 / 2.3 / 12.7 months | 0.7 / 2.9 / 10.3 |
+| Ahead from the start | 117 worlds | 7 |
+| Never overtakes | 33 worlds | 9 |
 
-Arm B wins cycle recovery in **95% of worlds**. Arm C's case is entirely the horizon, and
+Arm B wins cycle recovery in **97% of worlds**. Arm C's case is entirely the horizon, and
 that is stated rather than buried.
+
+**These figures are weaker than the ones this README carried before the rail-conditional
+revocation hazard landed, and the reason is worth stating.** Revocation was previously
+modelled with one hazard across all three rails. There is no two-tap in-app cancel
+gesture for a card mandate or an e-NACH — revoking those means contacting the bank — so
+the UPI-shaped hazard was being applied where it does not belong, and it inflated exactly
+the quantity Arm C's case rests on. Non-UPI rails now carry a near-zero hazard. Every
+crossover figure moved against C, the median crossover against A moved from 1.6 to 2.3
+months, and the p90 from 6.0 to 12.7. The claim survives; it survives with less room.
 
 **Mandate survival is reported as an ordering, never a count** — a count would rest on a
 per-notification revocation rate nobody publishes. At seed 42: `C > A > B` at every hazard
@@ -166,8 +198,8 @@ had it wrong, saying only that mandate authority survived:
 
 That third point changes the argument rather than decorating it. Halting is not merely
 the cheaper failure; it *leaves an asset behind* that the documented baseline abandons.
-Revoked destroys all three. C buys each avoided revocation with 2.0–6.0 additional halts against A and
-1.7–6.9 against B, swept across the hazard range. Whether that is a good trade depends on
+Revoked destroys all three. C buys each avoided revocation with 3.0–7.9 additional halts against A and
+2.2–9.9 against B, swept across the hazard range. Whether that is a good trade depends on
 manual-recovery rates for halted subscriptions, which are not published.
 
 ### What the authored cost matrix changed: nothing, and that is the finding
@@ -178,9 +210,14 @@ worst-case cost, because mistaking a recoverable failure for TERMINAL surrenders
 one payment while the reverse spends a capped execution *and* buys a failure
 notification.
 
-**Every reported figure above is identical to the run under the stub matrix.**
-Not approximately: the same win rates, the same crossover percentiles, the same
-breaking point, the same seed-42 table.
+**Every reported figure above survives an active perturbation of the matrix.**
+The check is not "it matches the stub" — that is a weak test, because two
+matrices can agree by accident. The cost matrix is deliberately rewritten so
+the LOW band resolves to a *different* class (ATTENTION instead of TERMINAL),
+and the full 300-world run is repeated. Two lines of output change: the two C2
+demonstration rows that print the resolved class. Every figure in this
+README — the seed-42 table, the win rates, the crossover percentiles, the
+breaking points — is byte-identical.
 
 That is the LOW row of the decision table doing exactly what it was designed to
 do. All four classes share one action at LOW confidence, so the class the cost
@@ -195,18 +232,35 @@ class is a guess — that its answer is deliberately inert.
 
 ### Where it breaks
 
-Under the calibrated profile, **no parameter condition separates wins from losses inside
-the calibrated ranges**. Under stress ranges deliberately widened past calibration:
+**This section previously said no condition separates wins from losses inside the
+calibrated ranges. That is no longer true, and the change is the honest headline of this
+run.** Under the rail-conditional hazard, three conditions now surface *inside* the
+calibrated ranges rather than only under stress:
 
-> C loses where `revocation_per_notification` is below ~0.0103 — **33%** of those worlds
-> against A, **50%** against B, versus 2–7% elsewhere. A second condition clears the
-> reporting threshold against A: `class_mix_TERMINAL` below ~0.064, losing **30%** of
-> those worlds against 8% elsewhere.
+| Condition | Against | Loss rate inside | Outside |
+|---|---|---|---|
+| `class_mix_INFRASTRUCTURE` above ~0.301 | A | 30% of 119 worlds | 8% of 181 |
+| `class_mix_TERMINAL` below ~0.287 | A | 25% of 180 worlds | 5% of 120 |
+| `revocation_per_notification` below ~0.0137 | B | 33% of 30 worlds | 8% of 270 |
+
+Under stress ranges deliberately widened past calibration the same conditions sharpen,
+and `rail_mix_emandate` joins them:
+
+> C loses where `revocation_per_notification` is below ~0.0103 — **40%** of those worlds
+> against A, **57%** against B, versus 6–13% elsewhere. Against A three more clear the
+> threshold: `class_mix_INFRASTRUCTURE` above ~0.504 and `rail_mix_emandate` above ~0.139
+> (both 41% of 29 worlds against 13%), and `class_mix_TERMINAL` below ~0.064 (40% of 30
+> against 13%).
 
 The mechanism is plain: if repeated failure notifications cost few mandates, protecting
 mandates buys little and contacting everyone wins. That parameter is the least evidenced
 number in the project, so **the result depends most on what can be defended least**. It is
 volunteered rather than left to be discovered.
+
+`rail_mix_emandate` appearing is the rail-conditional hazard becoming visible in the
+sweep rather than a new weakness: e-mandate now carries almost no revocation risk, so an
+e-mandate-heavy world is one where C's protective conservatism has little left to
+protect. That is the model being specific, and the sweep is reporting the consequence.
 
 ### What calibration exposed — the stronger result
 
@@ -217,8 +271,8 @@ under which Arm C loses sit **outside those ranges**:
 
 | Condition | Loss rate inside | Outside |
 |---|---|---|
-| `class_mix_INFRASTRUCTURE` above ~0.45 | 26% of 39 worlds | 4% of 161 |
-| `class_mix_TERMINAL` below ~0.064 | 30% of 20 worlds | 7% of 180 |
+| `class_mix_INFRASTRUCTURE` above ~0.504 | 41% of 29 worlds | 13% of 271 |
+| `class_mix_TERMINAL` below ~0.064 | 40% of 30 worlds | 13% of 270 |
 
 The old sweep **structurally could not sample either region**, however many worlds it drew.
 A sweep confined to a guessed range does not test the guess; it tests everything except the

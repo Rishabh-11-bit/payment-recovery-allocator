@@ -159,6 +159,8 @@ def main(
 
     if not report.unmapped_keys:
         typer.echo("\n  Nothing unmapped. Every emitted key matches a rule.")
+        _echo_captured(classifier)
+        _echo_unreachable(classifier)
         return
 
     typer.echo(
@@ -178,6 +180,7 @@ def main(
 
     _echo_ambiguity(report)
     _echo_captured(classifier)
+    _echo_unreachable(classifier)
 
     typer.echo(
         "\n  The frequency column is a fact about the key space and is what these\n"
@@ -185,6 +188,42 @@ def main(
         "  hand-written emission table -- matching rows to it fits the taxonomy to\n"
         "  the generator, which measures nothing. Use it to check reasoning you\n"
         "  reached another way, and be suspicious where it agrees too well.\n"
+    )
+
+
+def _echo_unreachable(classifier: Classifier) -> None:
+    """Rows that exist for keys no ingested event can produce.
+
+    Printed here because the coverage figure would otherwise flatter itself.
+    These rows raise the rule count and cover nothing that arrives, so a reader
+    comparing a rule count against a coverage percentage should be able to see
+    which rules were never in a position to contribute to it.
+    """
+    unreachable = classifier.config.unreachable_rules
+    if not unreachable:
+        return
+    total = len(classifier.config.rules)
+    typer.echo("")
+    typer.echo(
+        f"\n  UNREACHABLE ROWS ({len(unreachable)} of {total})"
+        " -- authored, correct, and never exercised"
+    )
+    typer.echo("")
+    for rule in unreachable:
+        match = ", ".join(f"{k}={v}" for k, v in sorted(rule.match.items()))
+        typer.echo(f"    {match:<52} -> {rule.failure_class.value}")
+    typer.echo("")
+    typer.echo(
+        "    `payment.failed` is not triggered on an authorisation failure, and"
+    )
+    typer.echo(
+        "    mandate registration fails at authorisation. Reaching these needs"
+    )
+    typer.echo(
+        "    `subscription.pending` ingestion -- see NOT_BUILT.md. They are counted"
+    )
+    typer.echo(
+        "    in the rule total and contribute nothing to the coverage figure above."
     )
 
 

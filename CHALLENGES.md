@@ -983,7 +983,102 @@ reader who only studies the retry and failure pages never encounters it.
 
 ---
 
-## 016 — _(next entry)_
+## 016 — Counting the fields is not the same as weighing them
+
+**Date:** Phase 3
+**Tags:** `#design` `#classifier` `#silent-failure`
+
+**Problem**
+Eight authored rows were added to the taxonomy. Three of them did not work, and the
+three that did not work reported nothing.
+
+The rows match on `reason` — `upi_autopay_not_supported_on_psp`,
+`funds_blocked_by_mandate`, `reqauth_mandate_not_acknowledged`. Each one names the cause
+outright. Each one lost to a rule already in the file that named `method` and `step`:
+
+| Row | Should be | Actually classified |
+|---|---|---|
+| `upi_autopay_not_supported_on_psp` | TERMINAL 0.95 | INFRASTRUCTURE 0.88 |
+| `funds_blocked_by_mandate` | LIQUIDITY 0.88, `funds_committed` | LIQUIDITY 0.92, no family |
+| `reqauth_mandate_not_acknowledged` | ATTENTION 0.70, `acknowledgement` | ATTENTION 0.90, no family |
+
+The first is the expensive one. TERMINAL read as INFRASTRUCTURE is the highest cell in
+the misclassification matrix — cost 10 — because it spends a capped execution that cannot
+succeed *and* buys a failure notification that moves the customer toward cancelling. The
+row written specifically to prevent that was in the file, valid, loaded, and inert.
+
+**Diagnosis**
+Rule precedence was the count of named fields:
+
+```python
+self._rules = sorted(config.rules, key=lambda rule: (-rule.specificity, rule.index))
+```
+
+`{method: upi, step: payment_initiation}` names two fields.
+`{reason: upi_autopay_not_supported_on_psp}` names one. Two beats one, so the rail-plus-
+step rule won.
+
+Counting treats all four key fields as equally informative. They are not, and this
+project's own context file already says so — "`step` localises better than `source`" is
+written down. `reason` names the cause; `method` is the rail and says nothing at all
+about what happened. A rule naming only `reason` is making a *more* specific claim than
+one naming `method` and `step`, using fewer fields to do it.
+
+The failure mode is what makes it worth an entry. A shadowed rule is not an error. It
+loads, it validates, it appears in the file, it counts toward the rule total, and it
+reads as coverage in review. The only way to observe it is to classify a key that should
+hit it and check what came back — which is exactly what nobody does for a row they just
+wrote and can see sitting there.
+
+**Options**
+1. Give the new rows more fields until they win — rejected twice over. It invents source
+   and step scope that was never authored, and it fixes three rows while leaving the
+   ordering that broke them in place for the next one
+2. Keep counting and forbid low-count rules — rejected. `reason`-only rules are the most
+   defensible kind in the file; banning them to preserve a sorting bug is backwards
+3. Order by which field is named, most discriminating first
+
+**Resolution**
+Option 3. `FIELDS_BY_INFORMATIVENESS = ("reason", "step", "source", "method")`, and
+precedence became a tuple of "is this field named", compared lexicographically. Field
+identity dominates field count; among rules naming the same discriminating field, naming
+more of the rest still wins.
+
+**The change was verified inert before it was kept.** Every distinct key the simulator
+emits across five world seeds, plus every captured payload — 15 keys — was classified
+before and after and diffed. Zero changed. So the new ordering fixes the three dead rows
+and touches nothing the project reports.
+
+It has one real cost, and it is not hidden. `_reject_ambiguous` used to catch two rules
+at equal field count that overlap and disagree. Under precedence, two rules tie only when
+they name the same field set — and then overlapping means identical constraints. The
+pairs it stopped catching are the ones the informativeness order now resolves
+deterministically, so they are decided rather than undetected; but the net is narrower,
+and the test that used to assert the old behaviour now asserts the resolution instead.
+
+A second check went in alongside it, for the same class of silence: a rule naming a
+`step` outside `step_space` is now rejected at load. A mistyped step matches nothing, and
+a rule that matches nothing is indistinguishable from one whose key has not arrived yet.
+
+**Why it mattered**
+**A rule that never fires and a rule that fires correctly look identical everywhere
+except at the moment of matching.** Every other signal agrees they are fine: the file
+parses, the count goes up, the diff looks right, review passes.
+
+The general shape is worth keeping. When a system resolves between candidates by a score,
+check what the score actually measures — here it measured *how many constraints a rule
+states*, and it was being read as *how specific a rule is*. Those coincide often enough
+to never notice, and diverge exactly where one field carries far more information than
+another. The eight new rows did not create this bug; they were simply the first rows
+written in a style that could expose it.
+
+Worth noting how it was found: not by a failing test, but by printing the classification
+of each new row after adding it. The tests written afterwards pin the outcomes, and they
+would have caught it — but only because the printout said to write them that way.
+
+---
+
+## 017 — _(next entry)_
 
 **Date:**
 **Tags:**
