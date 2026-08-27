@@ -40,10 +40,13 @@ from recovery.classifier import DEFAULT_CLASSIFIER_PATH, load_classifier
 from recovery.config import DEFAULT_CONFIG_PATH, load_config
 from recovery.fixtures import build_delivery
 from recovery.gateway import SimulatedGateway
+from recovery.guard import guard_from_config
+from recovery.ledger import Ledger
 from recovery.ingest import ingest_delivery
 from recovery.invariants import UNGUARDED_HAZARDS, search as invariant_search
 from recovery.normalize import normalize_entity
 from allocator.arm_c import ArmC
+from allocator.wiring import ArmCDecider
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
 from recovery.sim.horizon import SurvivalBasis, horizon_sweep
@@ -127,7 +130,9 @@ def main(
     for _ in range(REPLAY_COUNT):
         outcomes.append(ingest_delivery(store, config, headers, body).outcome.value)
 
-    stats = process_pending(store, config, gateway, classifier)
+    calendar = calendar_from_config(config.regulatory)
+    decider = ArmCDecider(ArmC(calendar, classifier, config))
+    stats = process_pending(store, config, gateway, classifier, decider=decider)
 
     typer.echo(f"  delivered {REPLAY_COUNT}x, ingest outcomes: {_summarise(outcomes)}")
     typer.echo(f"  worker: processed={stats.processed} decided={stats.decided}\n")
@@ -147,6 +152,7 @@ def main(
         marker = f"[{event.event_type.value}]"
         typer.echo(f"    {event.seq:>3}  {marker:<36} {_detail(event.detail)}")
 
+    passed = _trace_cases_section(store, config, gateway, classifier) and passed
     passed = _c2_section(classifier) and passed
     passed = _c5_section(config, classifier, profile) and passed
     passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
@@ -156,6 +162,107 @@ def main(
     typer.echo("\nreproduce: " + ("OK" if passed else "FAILED"))
     if not passed:
         sys.exit(1)
+
+
+# One delivery per cell worth looking at. Payment ids are fixed strings rather
+# than generated, because the whole point is that a reader can copy one out of
+# this README and run `explain` against it -- a uuid would be reproducible only
+# in the sense that it is regenerated every time.
+TRACE_CASES = (
+    (
+        "pay_SYNTHEXPIRED01",
+        "order_SYNTHEXPIRED01",
+        "card",
+        "issuer_bank",
+        "payment_authorization",
+        "payment_expired_card",
+        "TERMINAL at HIGH -- the cell the thesis rests on",
+    ),
+    (
+        "pay_SYNTHNOFUNDS01",
+        "order_SYNTHNOFUNDS01",
+        "upi",
+        "customer_psp",
+        "payment_debit_response",
+        "insufficient_funds",
+        "LIQUIDITY at HIGH -- recovers later rather than sooner",
+    ),
+    (
+        "pay_SYNTHNOMPIN001",
+        "order_SYNTHNOMPIN001",
+        "upi",
+        "customer",
+        "payment_authentication",
+        "payment_ux_canceled",
+        "ATTENTION -- customer reached, never entered M-PIN",
+    ),
+    (
+        "pay_SYNTHGENERIC01",
+        "order_SYNTHGENERIC01",
+        "netbanking",
+        "bank",
+        "payment_authorization",
+        "payment_failed",
+        "LOW band -- the payload carries no information",
+    ),
+)
+
+
+def _trace_cases_section(store, config, gateway, classifier) -> bool:
+    """Materialise one case per decision cell, so `explain` has something to explain.
+
+    The C1 demo above deliberately ingests a single event ten times -- that is
+    what proves the dedup key. It therefore produces exactly one case, and one
+    case cannot demonstrate that different causes get different decisions.
+
+    These four go through the same ingest, the same classifier, the same
+    allocator and the same guard. Nothing here is a display fixture: the
+    decisions are the ones the allocator makes, and if a cell changes, this
+    output changes with it.
+    """
+    typer.echo("\n\nC6 decision traces -- one case per cell, for `explain`\n")
+
+    calendar = calendar_from_config(config.regulatory)
+    decider = ArmCDecider(ArmC(calendar, classifier, config))
+    guard = guard_from_config(config, calendar)
+
+    for index, (payment_id, order_id, method, source, step, reason, _) in enumerate(
+        TRACE_CASES
+    ):
+        headers, body = build_delivery(
+            event_id=f"evt_TRACE{index:011d}",
+            payment_id=payment_id,
+            order_id=order_id,
+            method=method,
+            error_source=source,
+            error_step=step,
+            error_reason=reason,
+        )
+        gateway.seed_from_webhook(body["payload"]["payment"]["entity"])
+        ingest_delivery(store, config, headers, body)
+
+    process_pending(store, config, gateway, classifier, decider=decider, guard=guard)
+
+    ledger = Ledger(store)
+    ok = True
+    for payment_id, _, _, _, _, _, note in TRACE_CASES:
+        case_id = ledger.resolve(payment_id)
+        trace = ledger.trace(case_id) if case_id else None
+        if trace is None or not trace.decisions:
+            typer.echo(f"    {payment_id}  NO DECISION RECORDED")
+            ok = False
+            continue
+        decision = trace.decisions[-1]
+        typer.echo(f"    {payment_id}  {decision.action}")
+        typer.echo(f"        {note}")
+        typer.echo(f"        {decision.reason}")
+
+    typer.echo(
+        "\n    Every line above is a real decision from the real allocator. Trace one:"
+    )
+    typer.echo("      python -m recovery.explain --db data/reproduce.db pay_SYNTHEXPIRED01")
+    typer.echo("")
+    return _check("trace cases decided", len(TRACE_CASES) if ok else 0, len(TRACE_CASES))
 
 
 def _c2_section(classifier) -> bool:

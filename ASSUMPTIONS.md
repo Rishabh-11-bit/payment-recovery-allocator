@@ -96,10 +96,20 @@ emandate and was not contradicted, but neither was it confirmed.
 ### What it is
 
 The probability that a customer revokes their mandate in response to a single
-customer-visible failure notification. Modified by two further cardinal
-parameters in the same block: `fatigue_multiplier` `[1.15, 1.60]`, applied per
-notification after the first, and `class_multiplier`, which makes repeated
-"you have no money" messages more corrosive than technical declines.
+customer-visible failure notification. Modified by one further cardinal
+parameter in the same block: `fatigue_multiplier` `[1.15, 1.60]`, applied per
+notification after the first.
+
+A second modifier, `class_multiplier`, was deleted — it is recorded further down
+this file as a deleted parameter rather than an active one. The hazard is now
+class-independent by construction, and `World.revocation_hazard` discards the
+class argument with a comment saying why.
+
+**It is also rail-conditional.** UPI carries the full hazard; card and e-mandate
+carry a small fraction of it, because there is no two-tap in-app cancel gesture
+for either — revoking one means contacting the bank. Applying a UPI-shaped
+hazard to all three rails overstated exactly the quantity the mandate-survival
+argument rests on.
 
 ### Why it exists
 
@@ -163,34 +173,58 @@ current model does not distinguish them.
 
 Re-run under `bounded-2026`, which sweeps the LIQUIDITY/INFRASTRUCTURE/TERMINAL
 split across the full simplex instead of pinning it near a guessed point, the
-hazard **remains the dominant breaking condition under stress** — C loses 40% of
-worlds against A and 65% against B where the hazard is below ~0.010.
+hazard **remains the top breaking condition against Arm B in both range sets** —
+C loses 30% of worlds nominally where the hazard is below ~0.0155, and 50% under
+stress below ~0.0150, against 6% on the other side in each case.
 
-Calibration also surfaced two conditions the narrower guessed mix had hidden:
+Against Arm A it is no longer the top condition. It still clears the threshold
+under stress (40% of 30 worlds below ~0.0215, against 13%), but three conditions
+now separate wins from losses more sharply, and `fatigue_multiplier` displaces it
+entirely in the nominal set. That is a demotion and it is recorded as one.
+
+Calibration also surfaced conditions the narrower guessed mix had hidden:
 
 | Condition | Loss rate inside | Outside |
 |---|---|---|
-| `class_mix_INFRASTRUCTURE` above ~0.45 (nominal, vs A) | 26% of 39 worlds | 4% of 161 |
-| `class_mix_TERMINAL` below ~0.064 (stress, vs A) | 30% of 20 worlds | 7% of 180 |
+| `class_mix_INFRASTRUCTURE` above ~0.418 (stress, vs A) | 53% of 19 worlds | 14% of 81 |
+| `rail_mix_emandate` above ~0.129 (stress, vs A) | 47% of 19 worlds | 15% of 81 |
+| `class_mix_TERMINAL` below ~0.116 (stress, vs A) | 45% of 20 worlds | 15% of 80 |
+| `class_mix_TERMINAL` below ~0.287 (nominal, vs A) | 28% of 60 worlds | 8% of 40 |
 
-Both are mechanically obvious once visible, and neither could appear while the
-mix was pinned: where most failures are transient infrastructure faults, the
+All are mechanically obvious once visible, and none could appear while the mix
+was pinned: where most failures are transient infrastructure faults, the
 baseline's blind retries work and C's conservatism costs; where almost nothing is
 TERMINAL, C's main advantage — not spending attempts where recovery is impossible
-— has little to work on.
+— has little to work on; and where the batch is e-mandate-heavy, the rail-
+conditional hazard means there is barely any revocation risk left to protect
+against, so C withholds attempts to preserve mandates that were not going to be
+revoked anyway.
 
-### C8 found this parameter to be the result's breaking point
+### C8 finds this parameter to be the breaking point against Arm B, and no longer against Arm A
 
-The robustness sweep (300 sampled worlds, nominal and stress range sets) searched
-every swept parameter for the condition that best separates worlds where Arm C
-wins from worlds where it loses. **This parameter is the answer, by a wide
-margin.**
+The robustness sweep (100 sampled worlds per range set, nominal and stress)
+searches every swept parameter for the condition that best separates worlds where
+Arm C wins from worlds where it loses. **Against Arm B this parameter is the
+answer in both range sets. Against Arm A it has been displaced.**
 
-| Range set | Condition | Loss rate inside | Loss rate outside |
-|---|---|---|---|
-| Nominal, vs A | below ~0.0136 | 30% of 30 worlds | 7% of 270 |
-| Stress, vs A | below ~0.0102 | 47% of 30 worlds | 4% of 270 |
-| Stress, vs B | below ~0.0102 | 60% of 30 worlds | 2% of 270 |
+| Range set | Against | Condition | Loss rate inside | Loss rate outside |
+|---|---|---|---|---|
+| Nominal | B | below ~0.0155 | 30% of 20 worlds | 6% of 80 |
+| Stress | B | below ~0.0150 | 50% of 20 worlds | 6% of 80 |
+| Stress | A | below ~0.0215 | 40% of 30 worlds | 13% of 70 |
+| Nominal | A | — | *does not clear the threshold* | — |
+
+An earlier version of this section said the parameter was the answer "by a wide
+margin". Two changes took that away: `class_multiplier`'s deletion removed the
+amplification that made the hazard dominate, and making the hazard rail-
+conditional shrank its reach to UPI. What replaced it against Arm A is
+`fatigue_multiplier` in the nominal set and the mix parameters under stress — see
+those entries.
+
+**The demotion does not weaken the honesty of the claim; it moves where the claim
+is fragile.** Arm B is the arm that isolates cause-awareness from contact, so the
+B comparison is the one carrying the project's primary attribution, and that is
+the comparison this parameter still governs.
 
 The mechanism is not subtle, which is why it is worth stating rather than
 burying: if repeated failure notifications cost few mandates, then protecting
@@ -202,11 +236,20 @@ justified if the hazard is real.
 least.** That is the first thing a panel should attack, and it should be
 volunteered rather than discovered.
 
-Two conditions that were *expected* to break it and did not appear as dominant
+Two conditions that were *expected* to break it and still do not appear as
 splits: high TERMINAL link conversion, and time-independent liquidity recovery
-(swept down to `per_day = 0.0` under stress). Both were plausible and neither
-separated wins from losses as strongly as the hazard. Worth recording, because
+(`recovery_LIQUIDITY_per_day`, swept down to `0.0` under stress). Both were
+plausible and neither separates wins from losses at all. Worth recording, because
 predicting a breaking point and then not finding it is evidence too.
+
+Three parameters that were *not* predicted have since cleared the threshold under
+stress, and are recorded here so the list stays a record rather than a highlight
+reel: `recovery_LIQUIDITY_base` above ~0.165 (32% of 19 worlds vs B, against 11%),
+`recovery_ATTENTION_base` above ~0.037 (31% of 59 worlds vs A, against 7%), and
+`emission_fidelity` below ~0.823 (27% of 70 worlds vs A, against 7%). Note that
+`recovery_LIQUIDITY_base` is the *level* of liquidity recovery, not its time
+dependence — the ordinal fact the policy actually reads is `per_day > 0`, and that
+one is still unbroken.
 
 ### What would change if this is wrong
 
@@ -306,8 +349,35 @@ cardinal favouring Arm C. Its absence understates Arm C.
 
 Compounds the revocation hazard with each further notification. The ordinal claim —
 that the third notification is worse than the first — needs no number and is the part
-the argument uses. The magnitude is swept alongside `revocation_per_notification` and
-no result is quoted at a point in it.
+the argument uses. No result is quoted at a point in the range.
+
+### This is now the top nominal breaking condition against Arm A
+
+It was previously described here as swept alongside `revocation_per_notification`
+with nothing further to say about it. That is no longer true, and the change is
+worth stating plainly rather than leaving in the sweep output:
+
+| Range set | Against | Condition | Loss rate inside | Loss rate outside |
+|---|---|---|---|---|
+| Nominal | A | below ~1.218 | **40% of 20 worlds** | 15% of 80 |
+
+Below roughly 1.22, the second and third notifications are barely more corrosive
+than the first, so the hazard stops compounding — and the compounding is what
+Arm C's withholding is buying. An allocator that spends attempts more slowly than
+the baseline is paying a cycle-recovery cost for a protection that a flat fatigue
+curve does not deliver.
+
+**This matters more than its position in the table suggests.** The parameter is
+unsourced, its range is narrow, and the breaking point at ~1.218 sits just below
+the range's own floor of 1.15 — so the sweep is finding the failure at the very
+edge of what was configured as plausible. A reader who thinks fatigue is weaker
+than `[1.15, 1.60]` assumes is a reader for whom this result does not hold, and
+there is no published figure to tell them they are wrong.
+
+It is also the second unsourced cardinal the mandate-survival argument leans on,
+alongside `revocation_per_notification`. `class_multiplier` was deleted for being
+a third. This one survives deletion pressure because the ordinal claim behind it —
+repeated contact compounds — is the mechanism itself rather than a modifier on it.
 
 **Open, same as the parent entry:** whether fatigue is better modelled per
 notification or per notification *within a window*. Three failures in three days and
@@ -342,7 +412,15 @@ addition to* an unsourced hazard rate.
 ### The test
 
 Every multiplier set to `1.0` — no asymmetry at all — and the seed-42 crossover
-and the full 300-world sweep re-run against the version with it.
+and the full sweep re-run against the version with it.
+
+**This table is a historical record and is deliberately not regenerated.** It
+compares two builds, and one of them no longer exists: the parameter is deleted,
+so the left-hand column cannot be reproduced without resurrecting it. The figures
+are those the two builds produced *at the time of the test*, under the
+single-hazard model that preceded the rail-conditional one. They are the evidence
+that justified the deletion, and re-running only the surviving column against a
+changed model would destroy the comparison rather than refresh it.
 
 | | With multiplier | Flat 1.0 |
 |---|---|---|
@@ -352,6 +430,11 @@ and the full 300-world sweep re-run against the version with it.
 | Crossover median vs B | 1.6 mo | 1.7 mo |
 | Dominance ordering | `C > A > B`, 0 inversions | **`C > A > B`, 0 inversions** |
 | Stress breaking point | revocation hazard | **revocation hazard** |
+
+For the current model the corresponding figures are 80% ahead of A and 89% ahead
+of B at 12 months, with crossover medians of 1.8 and 2.8 months. Those are lower
+across the board because the hazard is now rail-conditional, not because the
+deletion cost anything — the comparison above is what isolates the deletion.
 
 ### The result, and why it justified deletion
 
@@ -373,14 +456,17 @@ discards the class argument with a comment saying why.
 
 Two second-order effects, both stated rather than smoothed over:
 
-- **Reported figures moved slightly.** Every number in the README is regenerated
-  under the flat model. Arm C's seed-42 recovery moved from ₹113,942 to ₹108,557,
-  and the seed-42 crossover band widened from 0.5–3.2 to 0.6–6.5 months vs B.
+- **Reported figures moved slightly.** Arm C's seed-42 recovery moved from
+  ₹113,942 to ₹108,557 at the time of the deletion, and the seed-42 crossover
+  band widened from 0.5–3.2 to 0.6–6.5 months vs B. Both have since moved again
+  under the rail-conditional hazard: ₹108,508 and 1.2–9.1 months. The README
+  carries the current values.
 - **A second breaking condition surfaced under stress vs A**:
-  `class_mix_TERMINAL` below ~0.064, losing 30% of those worlds against 8%
-  elsewhere. It was present before but sat below the reporting threshold; with
-  the hazard's effect no longer amplified for LIQUIDITY, it clears it. That is
-  the sweep finding something real, not the deletion breaking something.
+  `class_mix_TERMINAL`, which was present before but sat below the reporting
+  threshold; with the hazard's effect no longer amplified for LIQUIDITY, it
+  clears it. It still clears it today, at below ~0.116 losing 45% of 20 worlds
+  against 15% elsewhere. That is the sweep finding something real, not the
+  deletion breaking something.
 
 ## `emission.fidelity`
 
@@ -396,9 +482,33 @@ classifier's job is**. At `1.0` the taxonomy is perfectly separable, the cost ma
 never binds, and the comparison would test nothing. Below that, keys are ambiguous and
 misclassification costs matter.
 
-Sweeping it is how C8 demonstrates the result does not depend on a clean signal. The
+Sweeping it is how C8 tests whether the result depends on a clean signal. The
 range is unsourced and its lower bound under stress (`0.40`) is chosen to be
 implausibly bad rather than realistic.
+
+### It does depend on the signal, below a point — and that is new
+
+This entry previously said sweeping fidelity *demonstrates* the result does not
+depend on a clean signal. The current sweep contradicts that:
+
+| Range set | Against | Condition | Loss rate inside | Loss rate outside |
+|---|---|---|---|---|
+| Stress | A | below ~0.823 | 27% of 70 worlds | 7% of 30 |
+| Nominal | — | — | *does not clear the threshold* | — |
+
+Inside the calibrated range (`[0.75, 0.95]`) it still separates nothing, so the
+original claim holds where it was actually being made. Under stress it does not.
+The mechanism is direct and not a surprise once seen: Arm C is the only arm that
+*acts on* the class, so it is the only arm degraded by a payload that misreports
+the class. A and B ignore the classification entirely and are therefore immune to
+its being wrong.
+
+**That asymmetry is worth volunteering rather than defending.** A cause-aware
+allocator's advantage over a cause-blind one is bounded above by how well the
+cause can be read, and below roughly 0.82 the reading is poor enough that
+knowing-why stops paying for itself. It is the cleanest statement of this
+project's own precondition, and the sweep found it rather than the prose
+asserting it.
 
 ---
 
@@ -414,6 +524,25 @@ specific proportions are chosen.
 **[INFERRED]** — the ~8–15% vs ~2–3% figures are carried in `CLAUDE.md` as calibration
 sources, but I have not located a primary citation for them in `data/`. They should
 either get a sidecar or be marked secondary.
+
+### `rail_mix_emandate` is now a breaking condition
+
+| Range set | Against | Condition | Loss rate inside | Loss rate outside |
+|---|---|---|---|---|
+| Stress | A | above ~0.129 | 47% of 19 worlds | 15% of 81 |
+| Stress | B | above ~0.129 | 32% of 19 worlds | 11% of 81 |
+
+This appeared when the revocation hazard became rail-conditional, and it is the
+new model becoming visible rather than a new weakness. E-mandate carries almost no
+revocation risk — there is no in-app cancel gesture for an e-NACH, revoking one
+means contacting the bank — so an e-mandate-heavy batch is one where the
+allocator's conservatism has little left to protect. Arm C withholds attempts and
+contacts to preserve mandates that were not going to be revoked anyway, and pays
+the cycle-recovery cost for nothing.
+
+The single-hazard model could not have surfaced this: it had no way to express a
+rail on which revocation is rare. A sweep cannot find a failure mode living in a
+distinction the model does not draw.
 
 ---
 
@@ -439,20 +568,31 @@ crossover formula; it has not been tested by sweeping amount separately.
 
 ---
 
-## `ltv.remaining_lifetime_months`
+## `ltv.remaining_lifetime_months` — DELETED
 
-**Classification:** CARDINAL — no source, and never used to produce a figure
-**Range:** `[6, 18]`
+**Status:** removed from `config/worlds.yaml` and from `World`. This entry
+previously described it as sampled-but-unconsumed and retained anyway; it is
+neither sampled nor retained now.
 
-Sampled but **not consumed** by the reported horizon analysis, which sweeps lifetime
-from 1 to 24 months explicitly and reports the crossover rather than a value at any
-lifetime.
+### What it was
 
-Retained because the sweep should have a documented plausible band even though no
-result is quoted from it.
+A plausible band, `[6, 18]`, for a subscription's remaining lifetime.
 
-**[INFERRED]** — that it is currently unconsumed is from reading the code; if you
-intended it to bound the horizon sweep, that wiring does not exist.
+### Why it went
+
+It was **sampled and never read**. The reported horizon analysis sweeps lifetime
+from 1 to 24 months explicitly and reports the crossover, so nothing consumed the
+sampled value. A parameter that is drawn per world and then ignored is worse than
+absent: it appears in the config as though it bounds something, it invites a
+reader to ask what result depends on it, and the answer is none.
+
+Deleting it was free — no figure moved, because no figure read it.
+
+**The name stays on `contract.FORBIDDEN_ATTRIBUTES`.** Deleting the parameter
+removes today's problem; keeping the name forbidden means reintroducing it as a
+*policy* input is still caught by the ordinal check rather than discovered later.
+A deleted cardinal and a forbidden cardinal are different guarantees and the
+second one is the durable one.
 
 ---
 

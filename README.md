@@ -375,16 +375,59 @@ and the output states in as many words that it is **not** a significance test.
 
 **C6 — audit ledger.** A query surface over the append-only trail, and a decision trace.
 
+`python -m recovery.reproduce` writes the ledger; these then work against it with no
+further arguments:
+
+```bash
+python -m recovery.explain pay_SYNTHEXPIRED01
 ```
-python -m recovery.explain pay_TSjVZi1gipZs5L
+
+```bash
+python -m recovery.explain --list
+```
+
+```bash
 python -m recovery.explain --summary
 ```
 
 Resolves by case id, order id, or any payment on the chain — whoever asks "why did this
-happen" has whichever identifier the complaint arrived with. The trace names the
-classification, the decision and its idempotency key, and **every guard block with its
-reason**: a case that did nothing shows why, because "no decision" and "a decision the
-guard refused" are different facts. The ledger holds no write path, enforced by a test.
+happen" has whichever identifier the complaint arrived with. **Payment and order ids are
+fixed strings, not generated**, so an id printed in this README is the id in your ledger;
+case ids are uuids and are not quotable.
+
+The trace names the classification, the decision and its idempotency key, and **every
+guard block with its reason**: a case that did nothing shows why, because "no decision"
+and "a decision the guard refused" are different facts. The ledger holds no write path,
+enforced by a test.
+
+### The cell the thesis rests on
+
+`pay_SYNTHEXPIRED01` is an expired card — TERMINAL at HIGH confidence, the one class
+where `P(retry succeeds) = 0` holds by definition:
+
+```
+  classified TERMINAL at HIGH (confidence 0.99), family instrument
+  key        card/issuer_bank/payment_authorization/payment_expired_card
+
+  OUTCOME    OFFER_RAIL_MIGRATION - TERMINAL (HIGH, confidence 0.99) -> cell
+             spends_execution=false, contact=card_change_offer: retry cannot succeed
+             by definition; the only path is a customer-entered instrument
+
+  decisions:
+    attempt 1  OFFER_RAIL_MIGRATION  [recovery:pay_SYNTHEXPIRED01:0.1.0:1]
+```
+
+`spends_execution=false` is the whole argument in one field. The documented baseline
+spends T+1, T+2 and T+3 on this card and halts; the allocator spends **zero** of the
+capped budget and sends a card-change offer instead, because a card-change offer is the
+only action that can convert on a dead instrument. Three executions are returned to the
+mandate, and the customer receives one message that can be acted on rather than three
+that cannot.
+
+`reproduce` materialises one case per cell — TERMINAL/HIGH, LIQUIDITY/HIGH,
+ATTENTION/HIGH and a LOW-band generic decline — so the four decisions can be compared
+side by side. They are real decisions from the real allocator, not display fixtures: if
+a cell changes, that output changes with it.
 
 **C4 — the guard.** Admission control between Allocate and Execute; every proposal
 passes through. Mandate-execution cap, non-peak windows, PDN lead time with the 23:50

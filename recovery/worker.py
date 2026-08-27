@@ -66,6 +66,20 @@ class Decider(Protocol):
     ) -> tuple[DecisionAction, str]: ...
 
 
+# Optional, and looked up by name rather than declared on the protocol above.
+#
+# A decider that schedules an execution has already chosen *when* -- picking a
+# compliant slot is most of what deciding to retry means. The guard then has to
+# be told, because "an execution must name when it will run" is one of the
+# things it checks, and a decider that knows the slot but cannot hand it over
+# gets its own valid decisions refused.
+#
+# It is optional because a decider that never schedules an execution -- the
+# placeholder, and any contact-only policy -- has no slot to give and should not
+# be forced to implement a method returning None.
+SLOT_HOOK = "execution_slot"
+
+
 class PendingAllocatorDecider:
     """Placeholder. HOLD for everything, with the reason stated plainly.
 
@@ -351,15 +365,24 @@ def _process_one(
     #    it -- HOLD and SURRENDER create none, so there is nothing to admit.
     kind = OBLIGATION_KIND.get(action)
     if guard is not None and kind is not None:
+        slot_hook = getattr(decider, SLOT_HOOK, None)
+        execute_at = (
+            slot_hook(case, snapshot, attempt_n)
+            if kind is ProposalKind.EXECUTION and slot_hook is not None
+            else None
+        )
         request = GuardRequest(
             kind=kind,
             decided_at=datetime.now(timezone.utc),
-            execute_at=None,
+            execute_at=execute_at,
             attempts_seen=attempt_n,
             contacts_seen=0,
             payment_status=snapshot.status,
             order_id=snapshot.order_id,
             order_expires_at=snapshot.order_expires_at,
+            # The PDN lead time is rail-conditional -- 25h for UPI, 36h for
+            # cards -- so the guard cannot check it without knowing the rail.
+            rail=snapshot.method,
         )
         verdict = guard.check(request)
         if verdict.blocked:
