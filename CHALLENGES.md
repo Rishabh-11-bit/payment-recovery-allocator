@@ -1078,20 +1078,130 @@ would have caught it — but only because the printout said to write them that w
 
 ---
 
-## 017 — _(next entry)_
+## 017 — The allocator's main action was dead in production, and the simulator was green
 
-**Date:**
-**Tags:**
+**Date:** Phase 3
+**Tags:** `#integration` `#testing` `#audit` `#threat-model`
 
 **Problem**
+`SCHEDULE_AT` could never have been admitted on the live path. Not "was buggy" —
+**could never have been admitted**, for any case, ever.
+
+It is the allocator's central action. The LIQUIDITY cells exist to spend an execution
+later rather than sooner, which is the one piece of timing freedom NPCI leaves and the
+entire content of the "better placement of surviving attempts" claim. On the live path
+every one of those decisions was refused at admission.
+
+The whole time, the simulator was green, the 300-world sweep was green, C7's adversarial
+search was green, and 443 tests were green.
 
 **Diagnosis**
+Four components, each correct:
+
+1. **The allocator** picks a compliant slot. `compliant_slot` applies the non-peak
+   window and the rail's PDN lead, and returns a `Proposal` carrying `execute_at`.
+2. **The `Decider` protocol** returns `tuple[DecisionAction, str]` — an action and a
+   reason. The slot is not in the tuple, so it is discarded at the seam.
+3. **The worker** therefore has no slot to pass, and constructed its `GuardRequest`
+   with a literal `execute_at=None`.
+4. **The guard** checks that an execution names when it will run, finds `None`, and
+   refuses with `execute_at_not_in_future`.
+
+Every component did its job. The defect lives in the *space between* them, which is why
+no unit test could hold it: each side of the seam was individually right, and the
+protocol was the thing that was wrong.
+
+The protocol was written before the allocator existed, deliberately, so C1 could be
+proved without C3 — and `PendingAllocatorDecider` only ever returned `HOLD`, which
+creates no obligation and needs no admission. **A protocol designed against a
+placeholder that never schedules anything will not have a field for when to schedule
+it.** The seam was shaped by its first implementation and nobody re-derived it when the
+real one arrived.
+
+**Why the simulator could not see it.** The simulator constructs proposals and calls
+`Guard` directly. Production goes ingest → worker → decider → guard. The two paths share
+the guard and the allocator and *nothing in between*, so the simulator exercises the
+allocator's output and the guard's rules while never exercising the thing that carries
+one to the other. Both paths were tested. The path that only exists in production was
+not, because it is made of the components rather than being one.
+
+**This is `THREAT_MODEL.md` item 8 materialising as a real defect** — the simulator and
+the live path diverging where they are not forced to agree. It was written down as a
+risk before it happened, which is worth something, and did not prevent it, which is
+worth knowing. Naming a risk is not the same as having a test that fails when it occurs.
+
+**How it was actually found.** Not by a test. By running
+`python -m recovery.explain pay_SYNTHNOFUNDS01` after wiring the allocator in, and
+reading:
+
+```
+  OUTCOME    no obligation created - guard blocked: execute_at_not_in_future
+             (an execution must name when it will run)
+
+  blocked by the guard:
+    SCHEDULE_AT -> execute_at_not_in_future: an execution must name when it will run
+```
+
+**That is the difference between an audit trail and a log.** A log would have recorded
+that nothing happened. The trail recorded *what the system wanted to do, that it was
+refused, and the specific rule that refused it* — three facts, of which only the first
+was visible anywhere else. "No decision" and "a decision the guard refused" are
+different outcomes, and the trace was built to keep them apart precisely because
+conflating them hides working intent behind apparent inaction.
+
+The guard's own design contributed: **every block carries a reason, is audited, and is
+attributable.** A guard that returned a bare boolean would have produced the same
+silence a log would.
 
 **Options**
+1. Have the worker compute the slot itself — rejected outright. It would put scheduling
+   policy in the event core, duplicating `compliant_slot` in a second place where it can
+   drift, and the whole point of the allocator is that it owns that decision
+2. Widen `decide` to return a 3-tuple — rejected. It breaks both existing
+   implementations and the test fake, to serve deciders that never schedule anything
+3. A `DecisionProposal` return type replacing the tuple — the cleanest design, and
+   more churn than the defect warrants at this stage
+4. An optional `execution_slot` hook the worker consults only when the action creates an
+   execution
 
 **Resolution**
+Option 4. `SLOT_HOOK = "execution_slot"`, looked up by name, called only when
+`kind is ProposalKind.EXECUTION`. `ArmCDecider` implements it by re-planning and
+returning the `ATTEMPT` proposal's `execute_at`. `PendingAllocatorDecider` does not
+implement it and should not — a decider with no executions has no slot, and forcing it
+to return `None` would be ceremony.
+
+The worker now also passes `rail`, without which the rail-conditional PDN lead cannot be
+checked at all — a second thing the seam was silently dropping.
+
+Two tests pin it: one asserts a LIQUIDITY case reaches a *recorded decision* rather than
+a block, and one asserts the placeholder has no slot hook so the optionality stays
+deliberate.
 
 **Why it mattered**
+**Green tests on both sides of a seam say nothing about the seam.** The simulator tested
+allocator→guard by calling the guard directly. Production runs
+allocator→decider→worker→guard. Testing the endpoints while skipping the wiring is a
+structural blind spot, not an oversight — and it is invisible by construction, because
+every component passes.
+
+The general shape: when a system has a "real" path and a "test" path that share
+components but not composition, the difference between them is untested by definition,
+and it is exactly where integration defects live. The fix is not more unit tests. It is
+one test that runs the composition end to end — which is what
+`tests/test_explain_wiring.py` now is.
+
+Second, and more uncomfortable: **the failure was silent in the direction that looks
+safe.** A refused execution produces no obligation, no error, and no alarm. The system
+appeared conservative. Conservatism is what this allocator is *for*, so its central
+action failing closed looked exactly like it working. A defect whose symptom is
+indistinguishable from the intended behaviour will not be found by watching outcomes;
+it is found by asking a specific case what it did and why.
+
+Third: this is an argument for building the decision-trace CLI *early* rather than
+treating it as a presentation layer. It is second on the cut list in `CLAUDE.md` —
+one bad week from not existing. It found a defect that four test suites and a
+300-world sweep did not.
 
 ---
 
@@ -1119,3 +1229,20 @@ Things likely to become entries. Delete once resolved or ruled out.
       both could act on the same failure.
 - [ ] Classifier confidence thresholds: misclassification costs are asymmetric, so the
       operating point should follow the cost matrix, not accuracy.
+
+---
+
+## 018 — _(next entry)_
+
+**Date:**
+**Tags:**
+
+**Problem**
+
+**Diagnosis**
+
+**Options**
+
+**Resolution**
+
+**Why it mattered**
