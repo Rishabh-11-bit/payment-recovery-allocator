@@ -174,6 +174,20 @@ Over **300 sampled worlds per range set**, which is the figure that counts:
 Arm B wins cycle recovery in **97% of worlds**. Arm C's case is entirely the horizon, and
 that is stated rather than buried.
 
+**Three conditions inside the calibrated ranges make this claim fail.** They belong next
+to the claim rather than eighty lines below it, so they are named here and worked through
+in [Where it breaks](#where-it-breaks):
+
+| Condition | Against | Loss rate inside | Outside |
+|---|---|---|---|
+| `class_mix_INFRASTRUCTURE` above ~0.301 | A | **30%** of 119 worlds | 8% of 181 |
+| `class_mix_TERMINAL` below ~0.287 | A | **25%** of 180 worlds | 5% of 120 |
+| `revocation_per_notification` below ~0.0137 | B | **33%** of 30 worlds | 8% of 270 |
+
+An earlier version of this README said no condition separated wins from losses inside the
+calibrated ranges. Three now do, and they arrived from making the model *more* accurate
+rather than less — see below.
+
 **These figures are weaker than the ones this README carried before the rail-conditional
 revocation hazard landed, and the reason is worth stating.** Revocation was previously
 modelled with one hazard across all three rails. There is no two-tap in-app cancel
@@ -257,10 +271,18 @@ mandates buys little and contacting everyone wins. That parameter is the least e
 number in the project, so **the result depends most on what can be defended least**. It is
 volunteered rather than left to be discovered.
 
-`rail_mix_emandate` appearing is the rail-conditional hazard becoming visible in the
-sweep rather than a new weakness: e-mandate now carries almost no revocation risk, so an
-e-mandate-heavy world is one where C's protective conservatism has little left to
-protect. That is the model being specific, and the sweep is reporting the consequence.
+**`rail_mix_emandate` is the new model becoming visible, not a new weakness.**
+E-mandate carries almost no revocation risk — there is no in-app cancel gesture for an
+e-NACH, revoking one means contacting the bank — so an e-mandate-heavy world is one where
+**the allocator's conservatism has little left to protect**. Arm C withholds attempts and
+contacts to preserve mandates that were not going to be revoked anyway, and pays the
+cycle-recovery cost for nothing.
+
+This condition could not have appeared under the single-hazard model, because that model
+had no way to express a rail where revocation is rare. Making the hazard rail-conditional
+did not introduce the weakness; it made an existing one measurable. The same is true of
+the three in-range conditions above: a sweep that cannot represent a distinction cannot
+find the failure mode that lives in it.
 
 ### What calibration exposed — the stronger result
 
