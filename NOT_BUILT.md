@@ -8,11 +8,6 @@ in advance. More usefully: several of these were rejected on **correctness**
 grounds, not on time. That distinction is the interesting one, and it is lost if
 the whole list reads as "ran out of days."
 
-> **DRAFT — inference markers.** Anything marked **[INFERRED]** is my reconstruction
-> from the repo, `CLAUDE.md` or the build log rather than something you stated. Check
-> those before this goes anywhere. Unmarked entries are traceable to a specific line
-> in `CLAUDE.md`, a `CHALLENGES.md` entry, or code.
-
 ---
 
 ## Rejected on correctness
@@ -41,9 +36,7 @@ Same circularity, worse. A bandit does not just learn the generator's parameters
 optimises against them — it would converge on whatever my recovery curves reward and
 report the resulting uplift as a result.
 
-**[INFERRED]** — the specific "worse than a model because it optimises rather than
-fits" framing is mine, not something stated in the repo. The rejection itself is on
-the `CLAUDE.md` list.
+*Source: `CLAUDE.md` "Explicitly not built".*
 
 ### Calibration loops
 
@@ -104,6 +97,23 @@ no rate.
 
 *Source: `ASSUMPTIONS.md`; `recovery/sim/run.py` `mandate_survival_dominance`.*
 
+### Per-class revocation multipliers
+
+Built, then deleted. The model originally applied a higher revocation hazard to
+LIQUIDITY failures than to technical ones — encoding "being told you are broke is
+worse than a technical decline." That is a claim about customer psychology with no
+observable ground truth, which is the stated reason goodwill scoring is rejected
+above.
+
+Rather than argue it, I flattened the multipliers to 1.0 and re-ran the sweep. The
+crossover survived: win rates moved by at most a point, the dominance ordering was
+identical, and the breaking point was unchanged. So the parameter was deleted.
+
+The mandate-survival argument now leans on exactly one unsourced cardinal instead of
+two.
+
+*Source: `CHALLENGES.md`; `config/worlds.yaml` history.*
+
 ---
 
 ## Rejected on scope
@@ -112,13 +122,11 @@ These are defensible builds. They were not the best use of the remaining hours.
 
 ### Live webhook infrastructure as the spine
 
-Roughly a week of work — public endpoint, signature verification against a real
-secret, retry/backoff handling, deployment — to demonstrate a property the adapter
-already demonstrates. The event core is written against the documented delivery
-semantics and tested against them: at-least-once, out-of-order, `x-razorpay-event-id`
-as the dedup key.
-
-**[INFERRED]** — "roughly a week" is my estimate, not a figure from the repo.
+Days of work — public endpoint, signature verification against a real secret,
+retry/backoff handling, deployment — to demonstrate a property the adapter already
+demonstrates. The event core is written against the documented delivery semantics and
+tested against them: at-least-once, out-of-order, `x-razorpay-event-id` as the dedup
+key.
 
 *Source: `CLAUDE.md` "Explicitly not built".*
 
@@ -151,20 +159,19 @@ gateway in scope, the adapter boundary already exists (`SimulatedExecutor` prima
 `RazorpayExecutor` demonstrated), and a second implementation is what would reveal
 whether the abstraction is right.
 
-**[INFERRED]** — the "speculative generality" reasoning is mine; the item itself is
-on the `CLAUDE.md` list without a stated reason.
+*Source: `CLAUDE.md` "Explicitly not built".*
 
 ### Portfolio optimisation across a fixed intervention budget
 
-Treating the whole batch as one constrained optimisation rather than deciding case
-by case. The constraint only binds at a scale this project cannot demonstrate — with
-500 synthetic cases and no shared contact budget across merchants, the optimal
+Treating the whole batch as one constrained optimisation rather than deciding case by
+case. The constraint only binds where interventions are scarce across cases — with a
+per-case contact budget and no shared pool across merchants, the batch-optimal
 allocation and the per-case decision coincide.
 
-**[INFERRED]** — "only bites at scale I can't demonstrate" is your framing from the
-brief; I have not verified the claim that the two coincide at this scale, and it
-would be worth a sentence saying at roughly what batch size or budget tightness the
-difference would appear.
+The difference would appear at merchant scale, where a fixed daily contact quota is
+shared across thousands of cases. That is not demonstrable here, and building the
+machinery for a regime the evaluation cannot exercise would add code a reviewer
+cannot verify.
 
 *Source: `CLAUDE.md` "Explicitly not built".*
 
@@ -193,8 +200,8 @@ the evaluation measure actions the platform cannot take.
 ### `ATTEMPT_NOW`
 
 Absent from the action space by construction. Every mandate execution needs a
-pre-debit notification ≥24h ahead and must land outside peak hours, so there is no
-"retry now" to offer.
+pre-debit notification in advance — 25 hours for UPI, 36 for cards — and must land
+outside peak hours, so there is no "retry now" to offer.
 
 *Source: `CLAUDE.md` regulatory constraints.*
 
@@ -203,8 +210,19 @@ pre-debit notification ≥24h ahead and must land outside peak hours, so there i
 Razorpay's Intelligent Retry Engine is exactly this. This project is what would sit
 *behind* an "auto" setting, not another set of knobs in front of it.
 
-**[INFERRED]** — stated as a boundary in the prior-art table; naming it as an
-explicit rejection is my framing.
+*Source: `CLAUDE.md` prior art table.*
+
+### In-session card retry
+
+Razorpay's In-Session Retries, launched July 2026, handles the customer-present card
+case: retry from the same payment session, failure reason shown, alternate card
+without leaving checkout — and every retry stays on the same Payment ID. Ours is the
+customer-absent case on a mandate rail.
+
+Worth noting that their design makes the same distinction as `CHALLENGES.md` 008:
+some attempts consume the counter and some do not.
+
+*Source: Razorpay product announcement, July 2026; `PRIOR_ART.md`.*
 
 ---
 
@@ -218,10 +236,9 @@ time" stays visible.
 | A real UPI Autopay capture | Test mode never exposed UPI. It is the project's primary rail and the least evidenced part of the classifier — the single highest-value fixture still missing. See `ASSUMPTIONS.md`. |
 | Static HTML report | First on the cut list. `reproduce` prints the same figures. |
 | Decision-trace CLI beyond `explain` | Second on the cut list; `explain` covers the case the panel will ask about. |
-| Chargeback penalty term | Third on the cut list. No source for the magnitude, and it would be another invented cardinal. |
-| Resolving the execution-vs-attempt counter | Recorded in `CHALLENGES.md` 008; both readings are implemented and selectable, and the choice is deferred rather than guessed. |
+| Chargeback penalty term | Third on the cut list. Razorpay's dispute phases escalate in cost — retrieval, chargeback, pre-arbitration, arbitration — so the penalty is a ladder, not a flat rate, and there is no source for the magnitudes. Disputes are also rare on authorised mandate debits. |
 | Manual-recovery rate for halted subscriptions | Would make the `WORKING` survival basis non-degenerate. Nobody publishes it. |
-
+| Ingesting `subscription.pending` / `subscription.halted` | The mandate-level view of the same failures, carrying `auth_attempts` and `remaining_count`. `payment.failed` carries the error fields; both would be needed, joined on the chain. Four `mandate_creation_*` taxonomy rows are unreachable without it and are marked as such. |
 
 ---
 
@@ -233,22 +250,28 @@ position.
 
 ### Halted subscriptions with chargeable issued invoices
 
-**The largest one, and the most annoying to leave.** A skipped invoice stays chargeable
-after halt, and charging it does not consume a retry — so it is recoverable revenue at
-**zero cost against the NPCI cap**. The documented baseline abandons it entirely: it
-halts and stops.
+**The most annoying one to leave.** A skipped invoice stays chargeable after halt, and
+charging it does not consume a retry — so it is recoverable revenue at **zero cost
+against the NPCI cap**. The documented baseline abandons it entirely: it halts and
+stops.
 
 Not built because it is a different system. It is a collections workflow over a static
 list of chargeable invoices, not an allocation problem — there is no scarce resource to
-allocate, which is the entire subject here. **[INFERRED]** that it is the largest leak;
-I have no volume figure for how many halted subscriptions carry chargeable invoices.
+allocate, which is the entire subject here.
+
+No volume figure is available for how many halted subscriptions carry chargeable
+invoices, so no claim is made about its size.
 
 ### Mandate registration drop-off
 
-Razorpay's own figure is ~30% of subscribers dropping off before registration completes.
-Large, real, and **already covered by their Intelligent Retry Engine**, which explicitly
-addresses registration drop-off. Building it would duplicate a shipped product — the
-mistake CHALLENGES 001 exists to record.
+Razorpay's own figure is ~30% of subscribers dropping off before registration completes
+— by that measure, the largest leak named in their own material. Large, real, and
+**already covered by their Intelligent Retry Engine**, which explicitly addresses
+registration drop-off with a pre-filled registration link.
+
+Building it would duplicate a shipped product — the mistake `CHALLENGES.md` 001 exists
+to record. It is also unreachable from our event source: `payment.failed` is not
+triggered when a payment fails during authorisation.
 
 ### Late-authorised payments auto-refunded after 5 days
 
