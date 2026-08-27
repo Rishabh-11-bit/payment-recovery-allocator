@@ -21,6 +21,7 @@ from typing import Any
 
 from recovery.config import Config
 from recovery.models import AuditEventType, WebhookEnvelope
+from recovery.normalize import has_nested_error_object
 from recovery.store import Store
 
 
@@ -29,6 +30,8 @@ class IngestOutcome(str, enum.Enum):
     DUPLICATE = "duplicate"
     UNSUPPORTED = "unsupported"
     MALFORMED = "malformed"
+    # A real delivery describing something that is not a failure.
+    FILTERED = "filtered"
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,39 @@ def ingest_delivery(
             detail={"event": envelope.event, "accepted": list(config.ingest.accepted_events)},
         )
         return IngestResult(IngestOutcome.UNSUPPORTED, envelope.event_id, http_status=200)
+
+    entity = envelope.payment_entity
+
+    # A payload nesting its error fields would normalise to an empty key,
+    # classify as unmapped and land in the LOW row -- safe and entirely silent.
+    # Should never fire; audited loudly if it does. See CHALLENGES 014.
+    if has_nested_error_object(entity):
+        store.append_audit(
+            AuditEventType.PAYLOAD_SHAPE_UNEXPECTED,
+            event_id=envelope.event_id,
+            detail={
+                "expected": "flat error_code / error_source / error_step / error_reason",
+                "found": "nested error object",
+                "consequence": "every key would normalise empty; shape assumption is wrong",
+            },
+        )
+
+    # Not every `payment.failed` is a failure. A mandate registration fires a
+    # dummy debit to validate the mandate, and it is always `failed` -- filtered
+    # here rather than downstream, so it never opens a case, never spends a
+    # contact, and never enters the batch a result is computed over.
+    reason = str(entity.get("error_reason") or "").strip().lower()
+    if reason in config.ingest.filtered_reasons:
+        store.append_audit(
+            AuditEventType.WEBHOOK_FILTERED,
+            event_id=envelope.event_id,
+            detail={
+                "reason": reason,
+                "payment_id": entity.get("id"),
+                "why": "validation artefact, not a recoverable failure",
+            },
+        )
+        return IngestResult(IngestOutcome.FILTERED, envelope.event_id, http_status=200)
 
     # Raw payload lands before anything else looks at it.
     if not store.record_raw_event(envelope):

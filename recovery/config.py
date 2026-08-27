@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pathlib
 from datetime import time
-from typing import Annotated
+from typing import Annotated, Mapping
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -33,6 +33,8 @@ class DatabaseConfig(_Strict):
 class IngestConfig(_Strict):
     ack_budget_seconds: Annotated[float, Field(gt=0)]
     accepted_events: tuple[str, ...]
+    # error_reason values that are validation artefacts, not failures.
+    filtered_reasons: tuple[str, ...] = ()
 
 
 class WorkerConfig(_Strict):
@@ -125,6 +127,9 @@ class RegulatoryConfig(_Strict):
 
     attempt_cap: Annotated[int, Field(gt=0)]
     pdn_lead_time_hours: Annotated[int, Field(ge=0)]
+    pdn_lead_time_hours_by_rail: Mapping[str, int] = Field(default_factory=dict)
+    upi_completion_deadline_ist: time | None = None
+    upi_no_schedule_on_last_cycle_day: bool = False
     pdn_cutoff_ist: time
     afa_threshold_inr: Annotated[int, Field(gt=0)]
     peak_windows_ist: tuple[tuple[time, time], ...]

@@ -33,12 +33,36 @@ from typing import Any, Mapping
 from recovery.models import NormalizedFailure, PaymentSnapshot
 
 # Payment entity field -> key component.
+#
+# **Flat fields, deliberately.** A `payment.failed` webhook carries `error_code`,
+# `error_source`, `error_step` and `error_reason` as flat fields directly on the
+# payment entity. The nested `error: {...}` object is the shape of an *API error
+# response*, not of a webhook payload, and is never what arrives here.
+#
+# The captured fixtures came from an API *fetch*, which returns the same flat
+# shape on the payment entity -- so they could not have revealed a difference
+# between the two sources if one existed. `has_nested_error_object` exists so a
+# nested payload is loud rather than silently degrading to an empty key.
 FIELD_MAP = {
     "method": "method",
     "error_source": "source",
     "error_step": "step",
     "error_reason": "reason",
 }
+
+
+def has_nested_error_object(entity: Mapping[str, Any]) -> bool:
+    """True if the payload nests its error fields instead of flattening them.
+
+    Should never fire. If it does, the shape assumption above is wrong and every
+    key would otherwise normalise to `-/-/-/-`, classify as unmapped, and land in
+    the LOW row -- safe, and completely silent. Detecting it is the difference
+    between "we are handling an unknown key" and "we are misreading every key".
+    """
+    nested = entity.get("error")
+    if not isinstance(nested, Mapping):
+        return False
+    return any(field in nested for field in ("source", "step", "reason", "code"))
 
 
 def _clean(value: Any) -> str | None:

@@ -24,8 +24,8 @@ or T -> T-3 when both T and T-1 are holidays.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
-from typing import Iterable
+from dataclasses import dataclass, field
+from typing import Iterable, Mapping
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
@@ -41,6 +41,24 @@ class ComplianceCalendar:
     pdn_cutoff: dt.time
     attempt_cap: int
     bank_holidays: frozenset[dt.date] = frozenset()
+    # PDN lead differs by rail: UPI 25h, card 36h. The card figure is longer
+    # because the AFA authentication link is valid 72h above the AFA threshold,
+    # so the notification has to go out earlier. The flat 24h this started with
+    # was wrong for both rails it actually schedules on.
+    pdn_lead_by_rail: Mapping[str, int] = field(default_factory=dict)
+    # UPI auto-debits must COMPLETE by this time. With peak bars at 10:00-13:00
+    # and 17:00-21:30, the legal UPI window is 00:00-10:00 and 13:00-17:00.
+    # 21:30-24:00 is outside peak but past the deadline, so an execution
+    # scheduled there cannot finish -- a slot that looks legal and is not.
+    upi_completion_deadline: dt.time | None = None
+
+    def pdn_lead_for(self, rail: str | None) -> int:
+        return self.pdn_lead_by_rail.get(rail or "", self.pdn_lead_time_hours)
+
+    def past_upi_completion_deadline(self, moment: dt.datetime) -> bool:
+        if self.upi_completion_deadline is None:
+            return False
+        return moment.astimezone(IST).time() >= self.upi_completion_deadline
 
     def is_peak(self, moment: dt.datetime) -> bool:
         clock = moment.astimezone(IST).time()
@@ -65,14 +83,16 @@ class ComplianceCalendar:
             moment += dt.timedelta(minutes=15)
         return None
 
-    def pdn_deadline_for(self, debit_at: dt.datetime) -> dt.datetime:
+    def pdn_deadline_for(
+        self, debit_at: dt.datetime, rail: str | None = None
+    ) -> dt.datetime:
         """Latest moment a PDN may be sent for a debit at `debit_at`.
 
         The >=24h lead time, tightened by the 23:50 cutoff rule when the debit
         lands on the following calendar day.
         """
         debit_ist = debit_at.astimezone(IST)
-        deadline = debit_ist - dt.timedelta(hours=self.pdn_lead_time_hours)
+        deadline = debit_ist - dt.timedelta(hours=self.pdn_lead_for(rail))
         cutoff_day = deadline.date()
         if (debit_ist.date() - cutoff_day).days <= 1:
             cutoff = dt.datetime.combine(cutoff_day, self.pdn_cutoff, tzinfo=IST)
@@ -80,7 +100,12 @@ class ComplianceCalendar:
         return deadline
 
     def check_attempt(
-        self, *, decided_at: dt.datetime, execute_at: dt.datetime, attempts_used: int
+        self,
+        *,
+        decided_at: dt.datetime,
+        execute_at: dt.datetime,
+        attempts_used: int,
+        rail: str | None = None,
     ) -> ComplianceViolation | None:
         """None if the attempt is permitted, else the reason it is not."""
         if attempts_used >= self.attempt_cap:
@@ -93,9 +118,14 @@ class ComplianceCalendar:
             return ComplianceViolation(
                 f"peak_hour_barred: {execute_at.astimezone(IST).time()} IST"
             )
-        if decided_at > self.pdn_deadline_for(execute_at):
+        if rail == "upi" and self.past_upi_completion_deadline(execute_at):
             return ComplianceViolation(
-                f"pdn_lead_time_unmet: needs >={self.pdn_lead_time_hours}h "
+                f"past_upi_completion_deadline: must complete by "
+                f"{self.upi_completion_deadline} IST"
+            )
+        if decided_at > self.pdn_deadline_for(execute_at, rail):
+            return ComplianceViolation(
+                f"pdn_lead_time_unmet: needs >={self.pdn_lead_for(rail)}h "
                 f"and a PDN before {self.pdn_cutoff} IST"
             )
         return None
@@ -124,4 +154,6 @@ def calendar_from_config(regulatory, bank_holidays: Iterable[dt.date] = ()) -> C
         pdn_cutoff=regulatory.pdn_cutoff_ist,
         attempt_cap=regulatory.attempt_cap,
         bank_holidays=frozenset(bank_holidays),
+        pdn_lead_by_rail=dict(regulatory.pdn_lead_time_hours_by_rail),
+        upi_completion_deadline=regulatory.upi_completion_deadline_ist,
     )

@@ -100,6 +100,8 @@ class AuditEventType(str, enum.Enum):
     WEBHOOK_RECEIVED = "webhook.received"
     WEBHOOK_DUPLICATE_IGNORED = "webhook.duplicate_ignored"
     WEBHOOK_REJECTED_UNSUPPORTED = "webhook.rejected_unsupported"
+    WEBHOOK_FILTERED = "webhook.filtered"
+    PAYLOAD_SHAPE_UNEXPECTED = "webhook.payload_shape_unexpected"
     EVENT_STALE_IGNORED = "event.stale_ignored"
     CASE_OPENED = "case.opened"
     CASE_ATTACHED = "case.attached"

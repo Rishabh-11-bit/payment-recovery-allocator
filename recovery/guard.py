@@ -35,10 +35,16 @@ The cap counts *system-initiated mandate executions*. A customer tapping a
 recovery link is a payment against the same order and is **not** one. See
 CHALLENGES 008.
 
-The counter is deliberately duplicated here rather than shared with the
-allocator's. The allocator counts in order to *decide*; the guard counts in
-order to *admit*. If the two ever disagree the guard wins and the disagreement
-is logged -- which is only possible if they are separate implementations.
+**CHALLENGES 008 is resolved by Razorpay's own documentation**: "a manual charge
+attempt does not count toward the remaining retries." So the two counters are
+real and the platform already distinguishes them. `auth_attempts` on the
+subscription payload is authoritative -- it reads 1 on `subscription.pending`
+and 4 on `subscription.halted`, which is also primary-source confirmation of the
+four-attempt cap that until now was cited only secondarily.
+
+`GuardRequest.auth_attempts` therefore wins outright when present. The counter
+strategies below survive only for the case where the subscription payload is not
+to hand, and are no longer a guess about which population the cap counts.
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ class BlockReason(str, enum.Enum):
     ORDER_INVALID = "order_invalid"
     PAYMENT_ALREADY_SUCCEEDED = "payment_already_succeeded"
     ALREADY_DECIDED = "already_decided"
+    PAST_UPI_COMPLETION_DEADLINE = "past_upi_completion_deadline"
 
 
 class ProposalKind(str, enum.Enum):
@@ -130,6 +137,18 @@ class GuardRequest:
     order_id: str | None = None
     order_expires_at: dt.datetime | None = None
     already_decided: bool = False
+    # PDN lead time and the completion deadline are rail-specific: UPI 25h,
+    # card 36h. The flat 24h this started with was wrong for both.
+    rail: str | None = None
+    # AUTHORITATIVE execution count, from `auth_attempts` on the subscription
+    # payload. Razorpay's own docs settle CHALLENGES 008: "a manual charge
+    # attempt does not count toward the remaining retries", and auth_attempts
+    # reads 1 on subscription.pending and 4 on subscription.halted -- which is
+    # also primary-source confirmation of the four-attempt cap.
+    #
+    # When present it wins outright: the counter heuristics exist only for the
+    # case where the subscription payload is not to hand.
+    auth_attempts: int | None = None
 
 
 @dataclass(frozen=True)
@@ -249,7 +268,11 @@ class Guard:
         return self._contact(request)
 
     def _execution(self, request: GuardRequest) -> GuardVerdict:
-        used = self.counter.executions_used(request.attempts_seen, request.contacts_seen)
+        used = (
+            request.auth_attempts
+            if request.auth_attempts is not None
+            else self.counter.executions_used(request.attempts_seen, request.contacts_seen)
+        )
         if used >= self.calendar.attempt_cap:
             return _block(
                 BlockReason.EXECUTION_CAP_EXHAUSTED,
@@ -279,18 +302,32 @@ class Guard:
                 f"{request.attempt_pending_until.astimezone(IST):%Y-%m-%d %H:%M} IST",
             )
 
+        # A UPI auto-debit must complete by the deadline. 21:30-24:00 is
+        # outside every peak window and still unusable, which is the kind of
+        # slot a peak-only check happily admits.
+        if request.rail == "upi" and self.calendar.past_upi_completion_deadline(
+            request.execute_at
+        ):
+            return _block(
+                BlockReason.PAST_UPI_COMPLETION_DEADLINE,
+                f"UPI must complete by {self.calendar.upi_completion_deadline} IST; "
+                f"{request.execute_at.astimezone(IST):%H:%M} is past it",
+            )
+
         if self.calendar.is_peak(request.execute_at):
             return _block(
                 BlockReason.PEAK_HOUR_BARRED,
                 f"{request.execute_at.astimezone(IST):%H:%M} IST is inside a peak window",
             )
 
-        deadline = self.calendar.pdn_deadline_for(request.execute_at)
+        deadline = self.calendar.pdn_deadline_for(request.execute_at, request.rail)
         if request.decided_at > deadline:
             return _block(
                 BlockReason.PDN_LEAD_TIME_UNMET,
                 f"pre-debit notification had to be sent by "
-                f"{deadline.astimezone(IST):%Y-%m-%d %H:%M} IST",
+                f"{deadline.astimezone(IST):%Y-%m-%d %H:%M} IST "
+                f"({self.calendar.pdn_lead_for(request.rail)}h lead for "
+                f"{request.rail or 'default'})",
             )
         return ALLOWED
 

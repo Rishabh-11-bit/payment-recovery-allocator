@@ -25,15 +25,24 @@ from recovery.sim.calendar import IST, ComplianceCalendar
 PDN_MARGIN_MINUTES = 15
 
 
-def earliest_permitted(calendar: ComplianceCalendar, now: dt.datetime) -> dt.datetime:
-    """The soonest moment a decision made now could legally execute."""
+def earliest_permitted(
+    calendar: ComplianceCalendar, now: dt.datetime, rail: str | None = None
+) -> dt.datetime:
+    """The soonest moment a decision made now could legally execute.
+
+    Rail-specific: UPI needs 25h of notification lead, card 36h. Using a single
+    figure schedules every card execution into a window the guard will refuse.
+    """
     return now + dt.timedelta(
-        hours=calendar.pdn_lead_time_hours, minutes=PDN_MARGIN_MINUTES
+        hours=calendar.pdn_lead_for(rail), minutes=PDN_MARGIN_MINUTES
     )
 
 
 def compliant_slot(
-    calendar: ComplianceCalendar, now: dt.datetime, target_day: dt.date
+    calendar: ComplianceCalendar,
+    now: dt.datetime,
+    target_day: dt.date,
+    rail: str | None = None,
 ) -> dt.datetime | None:
     """First compliant execution slot on or after `target_day`.
 
@@ -43,14 +52,29 @@ def compliant_slot(
     """
     floor = max(
         dt.datetime.combine(target_day, dt.time(0, 30), tzinfo=IST),
-        earliest_permitted(calendar, now),
+        earliest_permitted(calendar, now, rail),
     )
     slot = calendar.next_compliant_slot(floor)
-    if slot is None:
+    while slot is not None:
+        violation = calendar.check_attempt(
+            decided_at=now, execute_at=slot, attempts_used=0, rail=rail
+        )
+        if violation is None:
+            return slot
+        # A UPI slot past the completion deadline is not merely late -- the next
+        # legal window is the following morning, so step to it rather than
+        # giving up and losing the day.
+        if "completion_deadline" in str(violation):
+            slot = calendar.next_compliant_slot(
+                dt.datetime.combine(
+                    slot.astimezone(IST).date() + dt.timedelta(days=1),
+                    dt.time(0, 30),
+                    tzinfo=IST,
+                )
+            )
+            continue
         return None
-    if calendar.check_attempt(decided_at=now, execute_at=slot, attempts_used=0) is not None:
-        return None
-    return slot
+    return None
 
 
 def offset_day(now: dt.datetime, days: int) -> dt.date:

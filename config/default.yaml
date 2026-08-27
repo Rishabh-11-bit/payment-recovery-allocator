@@ -17,6 +17,14 @@ ingest:
   accepted_events:
     - payment.failed
 
+  # Payments that are validation artefacts rather than failures. A mandate
+  # registration fires a dummy debit to prove the mandate works; it is ALWAYS
+  # status: failed and never represents money that was owed. Treating it as a
+  # recoverable failure would open a case, spend a contact and enter the batch
+  # on every single new mandate — a false positive on the happy path.
+  filtered_reasons:
+    - upi_dummy_payment
+
 worker:
   batch_size: 50
   # A claimed job older than this is considered abandoned and may be re-claimed.
@@ -119,9 +127,28 @@ governor:
 # in config rather than in code. NOT read by C1.
 regulatory:
   attempt_cap: 4            # 1 initial execution + 3 retries, ever
-  pdn_lead_time_hours: 24
+  # PDN lead time differs by rail. 24h was the generic figure and is wrong for
+  # both rails we actually schedule on.
+  #   UPI  25h — the notification must land a clear day ahead
+  #   Card 36h — the AFA authentication link is valid 72h above the AFA
+  #              threshold, so the notification goes out earlier
+  # `pdn_lead_time_hours` remains the fallback for a rail not listed.
+  pdn_lead_time_hours: 25
+  pdn_lead_time_hours_by_rail:
+    upi: 25
+    card: 36
+    emandate: 25
   pdn_cutoff_ist: "23:50"   # PDN requests at/after this are rejected for debit_date = T+1
   afa_threshold_inr: 15000
   peak_windows_ist:
     - ["10:00", "13:00"]
     - ["17:00", "21:30"]
+  # UPI auto-debits must COMPLETE by 21:00 IST. Combined with the peak bars,
+  # the legal window for a UPI execution is 00:00–10:00 and 13:00–17:00 —
+  # the 21:30–24:00 slot is outside peak but past the completion deadline, so
+  # scheduling there produces an execution that cannot finish.
+  upi_completion_deadline_ist: "21:00"
+  # A UPI subsequent payment must never be scheduled on the final day of the
+  # billing cycle: there is no day left to retry into, so a failure there
+  # forfeits the remaining budget outright.
+  upi_no_schedule_on_last_cycle_day: true

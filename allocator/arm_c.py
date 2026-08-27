@@ -150,7 +150,7 @@ class ArmC:
             )
 
         target = self._target_day(view, now, classification)
-        slot = compliant_slot(self.calendar, now, target)
+        slot = compliant_slot(self.calendar, now, target, view.rail)
         if slot is None:
             return Plan(
                 DecisionAction.HOLD,

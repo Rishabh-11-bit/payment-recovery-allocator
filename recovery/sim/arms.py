@@ -34,7 +34,10 @@ class Arm(Protocol):
 
 
 def _schedule(
-    calendar: ComplianceCalendar, now: dt.datetime, target_day: dt.date
+    calendar: ComplianceCalendar,
+    now: dt.datetime,
+    target_day: dt.date,
+    rail: str | None = None,
 ) -> dt.datetime | None:
     """First compliant moment on `target_day` that also clears the PDN lead time.
 
@@ -43,14 +46,26 @@ def _schedule(
     """
     earliest = max(
         dt.datetime.combine(target_day, dt.time(0, 30), tzinfo=IST),
-        now + dt.timedelta(hours=calendar.pdn_lead_time_hours, minutes=10),
+        now + dt.timedelta(hours=calendar.pdn_lead_for(rail), minutes=10),
     )
     slot = calendar.next_compliant_slot(earliest)
-    if slot is None:
+    while slot is not None:
+        violation = calendar.check_attempt(
+            decided_at=now, execute_at=slot, attempts_used=0, rail=rail
+        )
+        if violation is None:
+            return slot
+        if "completion_deadline" in str(violation):
+            slot = calendar.next_compliant_slot(
+                dt.datetime.combine(
+                    slot.astimezone(IST).date() + dt.timedelta(days=1),
+                    dt.time(0, 30),
+                    tzinfo=IST,
+                )
+            )
+            continue
         return None
-    if calendar.check_attempt(decided_at=now, execute_at=slot, attempts_used=0) is not None:
-        return None
-    return slot
+    return None
 
 
 class ArmA:
@@ -97,7 +112,7 @@ class ArmA:
         else:
             target_day = (view.failed_at.astimezone(IST) + dt.timedelta(days=offset)).date()
 
-        slot = _schedule(self.calendar, now, target_day)
+        slot = _schedule(self.calendar, now, target_day, view.rail)
         if slot is None:
             return []
         return [

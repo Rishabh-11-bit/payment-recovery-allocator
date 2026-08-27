@@ -267,9 +267,17 @@ def test_source_outside_its_methods_space_is_not_trusted(classifier):
     assert classifier.classify(probe).mapped is False
 
 
-def test_no_razorpay_source_exists(classifier):
+def test_razorpay_source_is_accepted_on_the_documentation_conflict(classifier):
+    """This test used to assert `razorpay` does not exist. Two Razorpay pages
+    disagree: the error-parameters reference says the source is `internal`, the
+    List of Errors page uses `razorpay`. Both are first-party.
+
+    CHALLENGES 007 applied to a gap in the documentation; this is the same rule
+    applied to a conflict *within* it. Rejecting a value one official page
+    publishes, because another omits it, is the same mistake in a new costume.
+    """
     space = classifier.config.source_space
-    assert all("razorpay" not in sources for sources in space.values())
+    assert all("razorpay" in sources for sources in space.values())
     assert "internal" in space["card"]
 
 

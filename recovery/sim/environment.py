@@ -39,10 +39,21 @@ class ActionKind(str, enum.Enum):
 
 
 class CaseOutcome(str, enum.Enum):
+    """Exit doors, and they are not equivalent.
+
+    HALTED preserves mandate authority and leaves the skipped invoice
+    chargeable. PAUSED preserves the mandate but suspends billing, and who
+    initiated it decides whether the merchant can undo it. REVOKED destroys the
+    authority. EXPIRED is the subscription reaching its natural end -- not a
+    failure at all, and counting it as one would inflate every loss figure.
+    """
+
     OPEN = "open"
     RECOVERED = "recovered"
     HALTED = "halted"
+    PAUSED = "paused"
     REVOKED = "revoked"
+    EXPIRED = "expired"
 
 
 @dataclass(frozen=True)
@@ -291,7 +302,9 @@ class Environment:
         result may be quoted at a single point in its range.
         """
         state.notifications += 1
-        hazard = self.world.revocation_hazard(state.failure.true_class, state.notifications)
+        hazard = self.world.revocation_hazard(
+            state.failure.true_class, state.notifications, state.failure.rail
+        )
         if self._rng.random() < hazard:
             state.outcome = CaseOutcome.REVOKED
             state.history.append(f"mandate_revoked@{moment.isoformat()}")

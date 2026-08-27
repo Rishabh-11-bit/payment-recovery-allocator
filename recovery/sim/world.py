@@ -26,6 +26,11 @@ DEFAULT_WORLDS_PATH = pathlib.Path("config/worlds.yaml")
 
 Range = tuple[float, float]
 
+# Card and Emandate revocation as a share of the UPI hazard. Near zero because
+# there is no in-app cancel gesture on those rails. UNSOURCED -- the ordinal
+# claim (far lower than UPI) is the part the argument uses. See ASSUMPTIONS.md.
+NON_UPI_HAZARD_SHARE = 0.05
+
 
 class WorldConfigError(ValueError):
     pass
@@ -117,7 +122,12 @@ class World:
             ),
         )
 
-    def revocation_hazard(self, failure_class: FailureClass, notification_index: int) -> float:
+    def revocation_hazard(
+        self,
+        failure_class: FailureClass,
+        notification_index: int,
+        rail: str | None = None,
+    ) -> float:
         """P(revoke) for the nth customer-visible notification, n from 1.
 
         Ordinal content: more notifications means more hazard, and the increase
@@ -130,6 +140,18 @@ class World:
         psychology earning nothing.
         """
         del failure_class  # the hazard is class-independent; see ASSUMPTIONS.md
+
+        # RAIL-CONDITIONAL. Revocation is a UPI phenomenon: the customer opens
+        # their PSP app and cancels the mandate in two taps. There is no
+        # equivalent gesture for a card mandate or an e-NACH -- cancelling those
+        # means contacting the bank or the merchant, so the hazard is near zero
+        # rather than merely lower.
+        #
+        # Applying a UPI-shaped hazard to every rail overstated the mandate
+        # argument on exactly the rails where it does not hold.
+        if rail is not None and rail != "upi":
+            return min(1.0, self.revocation_per_notification * NON_UPI_HAZARD_SHARE)
+
         base = self.revocation_per_notification
         base *= self.fatigue_multiplier ** max(0, notification_index - 1)
         return min(1.0, base)

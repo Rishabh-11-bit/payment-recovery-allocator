@@ -35,12 +35,17 @@ version: "1.0.0"
 #
 # Still true and worth keeping: there is no `razorpay` source — it is `internal`.
 
+# `razorpay` is here on the evidence of the List of Errors page, which
+# contradicts the error-parameters page that says the source is `internal`.
+# Both are Razorpay documentation. Accepting both is the lower-bound rule from
+# CHALLENGES 007 applied to a conflict between two first-party sources rather
+# than to a gap in one.
 source_space:
-  card: [customer, business, internal, gateway, issuer_bank]
-  upi: [customer, business, internal, gateway, issuer_bank, customer_psp, network, beneficiary_bank]
+  card: [customer, business, internal, gateway, issuer_bank, razorpay]
+  upi: [customer, business, internal, gateway, issuer_bank, customer_psp, network, beneficiary_bank, razorpay]
   # `bank` is here on the evidence of a real capture, not on the documentation.
-  netbanking: [customer, business, internal, issuer_bank, bank]
-  emandate: [customer, bank, business, internal, gateway, issuer_bank]
+  netbanking: [customer, business, internal, issuer_bank, bank, razorpay]
+  emandate: [customer, bank, business, internal, gateway, issuer_bank, razorpay]
 
 # Deliberately empty. An alias silently rewrites an observed value, so each one
 # needs a documented justification. Populate only with cause to.
