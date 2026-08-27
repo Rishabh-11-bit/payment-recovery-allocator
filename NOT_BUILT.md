@@ -221,3 +221,54 @@ time" stays visible.
 | Chargeback penalty term | Third on the cut list. No source for the magnitude, and it would be another invented cardinal. |
 | Resolving the execution-vs-attempt counter | Recorded in `CHALLENGES.md` 008; both readings are implemented and selectable, and the choice is deferred rather than guessed. |
 | Manual-recovery rate for halted subscriptions | Would make the `WORKING` survival basis non-degenerate. Nobody publishes it. |
+
+
+---
+
+## Revenue leaks identified and not addressed
+
+Found during research, deliberately out of scope. Listed because "we did not look" and
+"we looked and chose not to" are different statements, and only the second is a
+position.
+
+### Halted subscriptions with chargeable issued invoices
+
+**The largest one, and the most annoying to leave.** A skipped invoice stays chargeable
+after halt, and charging it does not consume a retry — so it is recoverable revenue at
+**zero cost against the NPCI cap**. The documented baseline abandons it entirely: it
+halts and stops.
+
+Not built because it is a different system. It is a collections workflow over a static
+list of chargeable invoices, not an allocation problem — there is no scarce resource to
+allocate, which is the entire subject here. **[INFERRED]** that it is the largest leak;
+I have no volume figure for how many halted subscriptions carry chargeable invoices.
+
+### Mandate registration drop-off
+
+Razorpay's own figure is ~30% of subscribers dropping off before registration completes.
+Large, real, and **already covered by their Intelligent Retry Engine**, which explicitly
+addresses registration drop-off. Building it would duplicate a shipped product — the
+mistake CHALLENGES 001 exists to record.
+
+### Late-authorised payments auto-refunded after 5 days
+
+A payment that late-authorises and is never captured is auto-refunded within 5 days.
+That is money that arrived and was given back.
+
+Not built because it is a capture-window problem, not a retry-allocation one, and
+because acting on it means capturing payments the merchant may not expect — a
+materially different risk posture from scheduling a retry. The safety invariant here
+exists to *avoid* creating obligations in that window; harvesting it would mean
+deliberately operating inside the window this system is designed to respect.
+
+### Paused subscriptions that never resume
+
+A pause is not a cancellation, and a subscription paused indefinitely is revenue
+stopped without anyone deciding to stop it. `pause_initiated_by` distinguishes
+merchant-initiated from customer-initiated, and a **customer-initiated pause cannot be
+resumed by the merchant** — so only one half of the population is even addressable.
+
+Not built because the addressable half needs a nudge-to-resume flow, which is contact
+policy with no execution budget attached, and because OC125 removes pause/cancel
+entirely for lending merchants — so the population varies by merchant category in a way
+nothing here models.

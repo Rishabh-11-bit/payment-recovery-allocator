@@ -200,3 +200,30 @@ Optimizer picks the gateway. The Intelligent Retry Engine picks the schedule. Ne
 
 &#x20; secondary sources; primary circular not publicly indexed)
 
+
+
+---
+
+## In-Session Retries (July 2026)
+
+Razorpay shipped in-session retries: a **card** payment that fails while the customer
+is still on the page is retried immediately, and the retries stay on the **same
+Payment ID**.
+
+**Boundary.** Every axis is the opposite of this project's:
+
+| | In-Session Retries | This layer |
+|---|---|---|
+| Session | Customer present | Customer gone |
+| Rail | Card | Mandate rails, UPI-weighted |
+| Timing | Immediate, in-session | >=25h ahead, non-peak window |
+| Identity | Same Payment ID | New payment, same order |
+| Budget | Not NPCI-capped | 1 initial + 3 retries, ever |
+
+It also sharpens the C10 boundary. In-session retries and Optimizer both operate while
+the customer is on the page; C10 shapes the recovery link sent *after* they have left.
+There is no overlap to negotiate — the two never see the same moment.
+
+**What it does mean:** a card failure that reaches this system has already survived
+in-session retry. It is a residual failure, not a first attempt, which makes the
+population arriving here harder than the raw failure population.

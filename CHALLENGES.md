@@ -852,7 +852,138 @@ because every assertion was about the count, and the count was right.
 
 ---
 
-## 014 — _(next entry)_
+## 014 — Fixtures from one source cannot tell you about another
+
+**Date:** Phase 3
+**Tags:** `#data` `#integration`
+
+**Problem**
+The classifier reads `(method, source, step, reason)` off the payment entity. Those come
+from `error_code`, `error_source`, `error_step` and `error_reason`, and the whole system
+reads them as **flat fields** on the entity.
+
+Razorpay also documents a nested `error: { source, step, reason, code }` object. If the
+webhook used the nested shape and the code expected flat, every key would normalise to
+`-/-/-/-`, classify as unmapped, and land in the LOW row. Safe — one recovery link, no
+execution — and completely silent. The system would report 100% coverage of a key space
+it was misreading in its entirety.
+
+**Diagnosis**
+Checked, and the code is right: webhooks carry the flat fields, and the nested object is
+the shape of an *API error response* rather than a webhook payload. Confirmed against
+Razorpay's published AsyncAPI schema.
+
+**But the evidence in this repo could never have shown that.** All five captured
+fixtures came from an API *fetch* of the payment entity — which also returns flat
+fields. So the fixtures were consistent with the code for a reason that had nothing to
+do with the webhook path being right. Had the two sources differed, every test would
+still have passed and the first real webhook would have been misread.
+
+The tests were verifying agreement between the code and one source, and being read as
+verifying agreement between the code and reality.
+
+**Options**
+1. Accept both shapes — rejected. Silently coercing a shape that should never arrive
+   hides the signal that an assumption broke, which is the same silent-degradation
+   failure in a new place
+2. Leave it, since the code is correct — rejected. Correct-today with no way to notice
+   becoming-wrong is not the same as safe
+3. Keep flat-only, document why, and detect the nested shape loudly
+
+**Resolution**
+Option 3. `has_nested_error_object` is checked at ingest and audits
+`webhook.payload_shape_unexpected` with the consequence spelled out. It should never
+fire; if it ever does, the alternative was a silent 100% misread. `FIELD_MAP` carries a
+comment stating that flat is the webhook shape and that the fixtures could not have
+revealed a difference.
+
+**Why it mattered**
+No bug was fixed here, which is the interesting part. **A fixture corpus drawn from one
+source cannot validate behaviour against a different source, however many fixtures it
+holds.** Five real payloads felt like strong evidence for the whole ingest path; they
+were strong evidence for exactly one half of it.
+
+The general shape: when a system reads the same logical data from two places — a webhook
+and an API, a cache and its origin, a replica and its primary — tests built from one
+place prove agreement with that place. The other path is untested and *looks* tested,
+which is worse than visibly untested, because nobody goes looking.
+
+The cheap mitigation is not more fixtures. It is a check that fires when the untested
+assumption turns out to be wrong.
+
+---
+
+## 015 — Not every failure is a failure
+
+**Date:** Phase 3
+**Tags:** `#domain` `#data` `#evaluation`
+
+**Problem**
+Every `payment.failed` opened a case. That is what the event is called.
+
+But a UPI mandate registration fires a validation debit to prove the mandate works, and
+that payment is **always `status: failed`** with `error_reason: upi_dummy_payment`,
+`source: business`, `step: payment_initiation`. It is not a failure. Nothing was owed and
+nothing was lost. It is the *success* path of registration, reported through the failure
+channel.
+
+The system treated each one as a recoverable failure: opened a case, classified it,
+spent a contact on it, and counted it in the batch every reported figure is computed
+over.
+
+**Diagnosis**
+A false positive on the happy path — the worst kind, because it scales with success.
+Every new mandate a merchant registers produces one. A merchant growing quickly generates
+more of these than real failures, so the better the business does, the more the recovery
+system's numbers are diluted by events that were never recoverable.
+
+The damage compounds across the whole stack rather than staying local:
+
+- **The contact budget is spent** on a customer whose mandate just registered
+  successfully, and who is told their payment failed
+- **The batch denominator inflates**, so recovery rate and money-recovered-per-case both
+  understate
+- **`terminal_attempts_wasted` and every other definitional metric shift**, because the
+  population they are computed over is contaminated
+- **The classifier reports it as unmapped or misclassified**, and the coverage figure
+  degrades for a key that should never have been classified at all
+
+None of that surfaces as an error. Every component behaves correctly on an input it
+should never have been handed.
+
+**Options**
+1. Classify it as its own class — rejected. It is not a failure class; adding one would
+   put a non-failure into a taxonomy of failure causes
+2. Filter it in the allocator — rejected. By then a case exists, a classification has
+   been recorded, and the batch already counts it
+3. Filter at ingest, before a case exists, and audit the filter
+
+**Resolution**
+Option 3. `config.ingest.filtered_reasons` lists reasons that are validation artefacts;
+ingest audits `webhook.filtered` and acknowledges 2xx without storing or enqueuing. It is
+config rather than a constant because it is a list that will grow, and each entry is a
+claim about the platform that deserves to be visible.
+
+Acknowledged rather than rejected, deliberately: a non-2xx would push the whole webhook
+toward the 24h backoff that disables it.
+
+**Why it mattered**
+**A channel named for failures does not contain only failures**, and the assumption that
+it does is invisible because the name is doing the arguing.
+
+It also lands squarely on the evaluation discipline this project spends most of its
+effort on. Every headline figure is per-case; the denominator is the batch; and the batch
+was silently including events that were structurally incapable of contributing to the
+numerator. The number would have been wrong in the safe direction — understating — which
+is exactly the direction nobody checks.
+
+Worth noting where it was found: reading Razorpay's registration flow documentation, not
+the failure documentation. The event is described where mandates are *created*, and a
+reader who only studies the retry and failure pages never encounters it.
+
+---
+
+## 016 — _(next entry)_
 
 **Date:**
 **Tags:**

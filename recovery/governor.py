@@ -33,6 +33,21 @@ The sourced outage distribution in `bounded-2026` supplies the thresholds --
 mean share per affected bank, and the upper end of the per-bank range -- so
 "degraded" means "worse than what NPCI actually published", not a number
 somebody picked.
+
+## The Downtime webhook, and its blind spot
+
+`payment.downtime.*` carries `severity`, `status` and `instrument_schema`, and
+`status: scheduled` means a planned outage is known in advance.
+
+`instrument_schema` is keyed differently per method -- UPI by `vpa_handle` or
+`psp`, cards by `issuer` or `network`, netbanking by `bank`.
+
+**The gap, stated because a clean feed is not the same as coverage:** a PSP is
+flagged down only when *all* of its handles are down. A PSP degrading on one
+handle -- the common shape -- produces no notice at all. The webhook is
+high-precision and low-recall: trust it when it fires, never read silence as
+health. That is why the observed-failure-rate path remains rather than being
+replaced by it.
 """
 
 from __future__ import annotations
@@ -54,6 +69,59 @@ class IssuerState(str, enum.Enum):
     HEALTHY = "healthy"
     STRAINED = "strained"
     DEGRADED = "degraded"
+
+
+# Instrument key by method, from the Downtime webhook's `instrument_schema`.
+# The field differs per method -- keying everything on "issuer" would silently
+# discard every UPI notice, which is the rail that matters most here.
+INSTRUMENT_KEY = {
+    "upi": ("vpa_handle", "psp"),
+    "card": ("issuer", "network"),
+    "netbanking": ("bank",),
+    "emandate": ("bank",),
+}
+
+
+@dataclass(frozen=True)
+class DowntimeNotice:
+    """A `payment.downtime.*` webhook.
+
+    Better evidence than our own failure rate on two counts: it comes from the
+    network rather than being inferred, and `status: scheduled` arrives *before*
+    the outage, so a planned window can be avoided rather than spent into. It is
+    the only signal in this system that arrives ahead of the failure it predicts.
+    """
+
+    method: str
+    instrument: str
+    severity: str
+    status: str
+    at: dt.datetime
+
+    @property
+    def is_scheduled(self) -> bool:
+        return self.status == "scheduled"
+
+    @property
+    def is_active(self) -> bool:
+        return self.status in ("started", "scheduled")
+
+    @classmethod
+    def from_payload(cls, entity: Mapping, at: dt.datetime) -> "DowntimeNotice":
+        method = str(entity.get("method", "")).lower()
+        schema = entity.get("instrument_schema") or entity.get("instrument") or {}
+        instrument = ""
+        for field_name in INSTRUMENT_KEY.get(method, ()):
+            if schema.get(field_name):
+                instrument = str(schema[field_name]).lower()
+                break
+        return cls(
+            method=method,
+            instrument=instrument,
+            severity=str(entity.get("severity", "")).lower(),
+            status=str(entity.get("status", "")).lower(),
+            at=at,
+        )
 
 
 @dataclass(frozen=True)
@@ -119,6 +187,10 @@ class StormGovernor:
         self.degraded_failure_share = degraded_failure_share
         self.jitter_minutes = jitter_minutes
         self._issuers: dict[str, _IssuerWindow] = {}
+        # Active downtime notices, keyed by instrument. Not a blocklist:
+        # entries are added and removed by the network's own started/resolved
+        # events, and nothing here is ever typed by hand.
+        self._downtime: dict[str, DowntimeNotice] = {}
 
     # ------------------------------------------------------------ observe --
 
@@ -127,6 +199,27 @@ class StormGovernor:
         window = self._issuers.setdefault(issuer, _IssuerWindow())
         window.observations.append(Observation(issuer=issuer, at=at, failed=failed))
         window.trim(at - self.window)
+
+    def observe_downtime(self, notice: DowntimeNotice) -> None:
+        """Consume a Downtime webhook.
+
+        An active high-severity notice drives the instrument to DEGRADED at
+        once, without waiting for `min_observations` failures -- waiting would
+        mean spending exactly the executions the notice was warning about.
+        """
+        key = notice.instrument or notice.method
+        if not key:
+            return
+        if notice.is_active:
+            self._downtime[key] = notice
+        else:
+            self._downtime.pop(key, None)
+
+    def downtime_state(self, issuer: str) -> IssuerState | None:
+        notice = self._downtime.get(issuer)
+        if notice is None:
+            return None
+        return IssuerState.DEGRADED if notice.severity == "high" else IssuerState.STRAINED
 
     def failure_share(self, issuer: str, now: dt.datetime) -> float | None:
         """Observed failure share in the window, or None below the threshold.
@@ -145,6 +238,13 @@ class StormGovernor:
         return failures / len(window.observations)
 
     def state_of(self, issuer: str, now: dt.datetime) -> IssuerState:
+        # A live downtime notice outranks the observed rate: it is direct
+        # evidence, and for a scheduled outage it is evidence held before any
+        # failure has happened.
+        declared = self.downtime_state(issuer)
+        if declared is not None:
+            return declared
+
         share = self.failure_share(issuer, now)
         if share is None:
             return IssuerState.HEALTHY

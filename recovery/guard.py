@@ -71,6 +71,7 @@ class BlockReason(str, enum.Enum):
     PAYMENT_ALREADY_SUCCEEDED = "payment_already_succeeded"
     ALREADY_DECIDED = "already_decided"
     PAST_UPI_COMPLETION_DEADLINE = "past_upi_completion_deadline"
+    CONCURRENT_REQUEST_IN_PROGRESS = "concurrent_request_in_progress"
 
 
 class ProposalKind(str, enum.Enum):
@@ -149,6 +150,10 @@ class GuardRequest:
     # When present it wins outright: the counter heuristics exist only for the
     # case where the subscription payload is not to hand.
     auth_attempts: int | None = None
+    # Razorpay rejects simultaneous operations on one token and asks for a
+    # 60-second wait. Two workers on one mandate is not hypothetical -- it is
+    # what the crash-reclaim path produces.
+    token_busy_until: dt.datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +213,7 @@ class Guard:
             self._payment_settled,
             self._order,
             self._idempotency,
+            self._token_busy,
             self._kind_specific,
         ):
             verdict = check(request)
@@ -260,6 +266,23 @@ class Guard:
         """
         if request.already_decided:
             return _block(BlockReason.ALREADY_DECIDED, "an obligation already exists")
+        return ALLOWED
+
+    def _token_busy(self, request: GuardRequest) -> GuardVerdict:
+        """One operation per token at a time.
+
+        Blocked rather than queued: a refusal that says when to come back
+        survives a restart, and a proposal held in memory does not.
+        """
+        if request.token_busy_until is None:
+            return ALLOWED
+        moment = request.execute_at or request.decided_at
+        if moment < request.token_busy_until:
+            return _block(
+                BlockReason.CONCURRENT_REQUEST_IN_PROGRESS,
+                f"another operation holds this token until "
+                f"{request.token_busy_until.astimezone(IST):%H:%M:%S} IST",
+            )
         return ALLOWED
 
     def _kind_specific(self, request: GuardRequest) -> GuardVerdict:

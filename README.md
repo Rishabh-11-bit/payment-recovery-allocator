@@ -25,6 +25,26 @@ strategies. This project does not duplicate any of them.
 
 See `PRIOR_ART.md` for the full boundary analysis.
 
+## Scope: one surface, deliberately
+
+The track names four loss surfaces — payment failures, checkout abandonment,
+subscription failures, and overdue receivables. This is one of them, built deeply
+rather than four built thinly. Three reasons that is the better trade here:
+
+- **The classifier generalises already.** It keys on `(method, source, step, reason)`,
+  which every payment type carries. Nothing about the taxonomy is subscription-specific.
+- **The allocator is not about subscriptions.** It is about spending a capped resource
+  against outcomes with different recovery characteristics. Swap the cap and the action
+  space and the twelve-cell table still applies.
+- **The guard is where surface-specific constraints live.** NPCI's cap, the peak
+  windows and the PDN lead are all in C4. A different surface changes the guard, not
+  the decision structure above it.
+
+The depth is the point: a capped budget with a regulator-defined action space is what
+makes the allocation problem interesting, and subscriptions are where that constraint
+actually bites. Breadth would have meant four shallow demonstrations of a problem whose
+difficulty only appears at depth.
+
 ## Documents
 
 | File | Contents |
@@ -111,6 +131,12 @@ is ahead from some remaining lifetime onward, and that lifetime is the claim.
 At seed 42, swept across the hazard range: C overtakes B at **0.6–6.5 months**
 of remaining lifetime and A at **0.9–5.3 months**.
 
+**For fixed-count subscriptions the horizon is not an assumption at all.**
+`remaining_count` is on every subscription payload, so remaining lifetime is *known*
+per case and the crossover can be computed rather than swept. The sweep is the right
+instrument only for open-ended subscriptions, where the horizon genuinely is unknown.
+Treating every case as open-ended was leaving observable information on the table.
+
 Over **300 sampled worlds per range set**, which is the figure that counts:
 
 | | vs A | vs B |
@@ -129,8 +155,18 @@ that is stated rather than buried.
 per-notification revocation rate nobody publishes. At seed 42: `C > A > B` at every hazard
 in the swept range, zero inversions.
 
-Halted and revoked are different exit doors: halted preserves mandate authority, revoked
-destroys it. C buys each avoided revocation with 2.0–6.0 additional halts against A and
+**Halted preserves three things, not one** — and the earlier version of this README
+had it wrong, saying only that mandate authority survived:
+
+1. **Mandate authority.** The merchant can still charge manually.
+2. **Reactivation on card change.** No customer re-authorisation needed.
+3. **The skipped invoice, as a budget-free chargeable asset.** A skipped invoice stays
+   chargeable after halt, and charging it **"does not increase the number of retries
+   remaining"** — so it is recoverable revenue that costs nothing against the NPCI cap.
+
+That third point changes the argument rather than decorating it. Halting is not merely
+the cheaper failure; it *leaves an asset behind* that the documented baseline abandons.
+Revoked destroys all three. C buys each avoided revocation with 2.0–6.0 additional halts against A and
 1.7–6.9 against B, swept across the hazard range. Whether that is a good trade depends on
 manual-recovery rates for halted subscriptions, which are not published.
 
@@ -284,6 +320,13 @@ audited against its own rules, and every arm must face identical admission rules
 comparison measures which arm remembered the regulations. **Every block carries a
 reason and is attributable per arm**, so what an arm *tried* stays visible next to what
 it was *allowed* to do.
+
+**Two event sources, joined on the chain.** `payment.failed` is the payment-level
+view and is the only one carrying the error fields the classifier keys on.
+`subscription.pending` is the *mandate-level* failure signal and fires again on each
+subsequent failure; `subscription.halted` is budget exhaustion. Both are needed:
+the payment event says *why*, the subscription event says *where in the budget*, and
+`auth_attempts` on the subscription payload is the authoritative execution count.
 
 Dedup is on `x-razorpay-event-id` — a header, not a body field. Delivery is
 at-least-once and duplicates are expected, so a duplicate is acknowledged 2xx and
