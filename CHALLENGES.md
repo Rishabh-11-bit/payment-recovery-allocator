@@ -1232,7 +1232,109 @@ Things likely to become entries. Delete once resolved or ruled out.
 
 ---
 
-## 018 — _(next entry)_
+## 018 — The test failed for being quick
+
+**Date:** Phase 3
+**Tags:** `#testing` `#flake` `#time`
+
+**Problem**
+One run of the suite reported `1 failed, 442 passed`. The next five were clean. Nothing
+had changed between them.
+
+An unidentified intermittent failure is worse than a known one: it cannot be reasoned
+about, it erodes trust in every green run after it, and on a project whose entire claim
+is "the evidence is reproducible" it is the exact defect that most undermines the pitch.
+
+**Diagnosis — including the part that wasted the most time**
+The first hunt was **the wrong experiment, run correctly**: 20 full-suite runs with a
+fixed Hypothesis seed. All 20 passed, and they could not have done otherwise. Fixing the
+seed makes C7's property search explore the *same* orderings every run — it converts the
+only randomised component in the suite into a deterministic one. A fixed seed is the
+right tool for *reproducing* a known flaky example and the wrong one for *finding* an
+unknown one, and 55 minutes went into establishing that.
+
+Twelve more runs with varying seeds: also clean. 32 runs, zero failures.
+
+What finally reproduced it was narrowing to the file rather than the seed. The full
+suite takes ~3 minutes; `tests/test_c7_invariants.py` takes 78 seconds, so the same
+wall-clock budget buys three times the attempts. It failed on the third run — and it was
+not the Hypothesis search at all:
+
+```
+FAILED tests/test_c7_invariants.py::test_crashed_job_is_reclaimed_not_dropped
+    assert store.claimed_job_count() == 0
+E   assert 1 == 0
+```
+
+The test simulates a crashed worker — claim a job, never finish it — then asserts the
+next `process_pending` reclaims it. It set `claim_timeout_seconds` to **0.001** and
+relied on real time passing. The store's reclaim condition is:
+
+```sql
+j.state = 'claimed' AND j.claimed_at < ?   -- cutoff = now - claim_timeout
+```
+
+So a 1-millisecond timeout asks: *did the two statements between the claim and the
+reclaim take longer than a millisecond?* On a fast machine, or when both timestamps land
+in the same clock tick, they do not. The job is not reclaimed and the assertion fails.
+
+**The test failed for being quick.** And the failure message — `assert 1 == 0` — says
+nothing whatsoever about timing, which is why it read as mysterious rather than as a
+race.
+
+The product logic was correct throughout. Reclaim works. The defect was entirely in how
+the test asked the question.
+
+**Options**
+1. Widen the timeout to 50ms and hope — rejected. It changes the flake's frequency, not
+   its existence, and a test that is *usually* fast enough is still a test that fails on
+   a loaded CI box
+2. Sleep between the claim and the reclaim — rejected for the same reason, plus it makes
+   every run slower to fix a problem that is not about duration
+3. Remove the dependency on elapsed real time entirely
+
+**Resolution**
+Option 3. The claim is **backdated an hour** with a direct update, and the timeout set to
+a realistic 30 seconds. The question the test asks becomes unambiguous at any machine
+speed: a claim made an hour ago, under a 30-second timeout, must be reclaimed.
+
+**Verified not to have been weakened.** A test made deterministic by making it vacuous is
+worse than a flaky one, so the reclaim branch in `store.claim_jobs` was disabled and the
+test re-run: it fails, as it must. Determinism was bought by removing the race, not by
+removing the assertion.
+
+One unrelated fix went in alongside, and it is worth separating clearly because it is
+**not** the cause: `run()` in the same file gave every Hypothesis example the same SQLite
+filename, deleting and recreating it each time, while `execute` opens a store it cannot
+close if it raises. On Windows, unlinking a file whose handle is still held raises
+`PermissionError`. That was the leading hypothesis before the real cause was found, it
+was a plausible mechanism, and it was wrong. Each example now gets its own filename —
+correct regardless, and recorded as a speculative fix rather than a diagnosis.
+
+**Why it mattered**
+**A test that depends on real elapsed time is a test with a hidden performance
+assumption.** This one asserted, without saying so, that two Python statements take more
+than a millisecond. That is not a claim about the system under test, it is a claim about
+the machine, and it was false often enough to fail roughly one run in four in isolation —
+diluted to perhaps one in six across the full suite, which is exactly the frequency that
+gets a failure dismissed as noise.
+
+Second, on method: **the instinct to reach for determinism by pinning a seed was
+actively counterproductive.** Pinning the seed suppressed the only source of variation
+the suite had, and 20 green runs then read as evidence of stability when they were
+evidence of nothing. The lesson is not "don't pin seeds" — it is that reproducing an
+intermittent failure and confirming a fix need opposite settings, and using the second
+tool for the first job produces a confident negative result that is worthless.
+
+Third, on economics: the successful hunt narrowed the *unit under test* rather than
+adding runs. Three times the attempts per minute is the entire reason it was found at
+all, and the earlier hour of full-suite runs bought less information than fifteen minutes
+of targeted ones. When hunting something rare, shrink the trial before increasing the
+count.
+
+---
+
+## 019 — _(next entry)_
 
 **Date:**
 **Tags:**

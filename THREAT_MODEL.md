@@ -163,6 +163,32 @@ ingest, a worker, and a decider seam.
 Any claim of the form "Arm C recovers X" is a claim about the simulator's Arm C. The
 holdout harness (C12) exists because that gap cannot be closed by more simulation.
 
+### This has now happened. It is no longer a hypothetical.
+
+Wiring the allocator into the live path revealed that **`SCHEDULE_AT` could never have
+been admitted in production** — not "was buggy", could never have been admitted, for any
+case. It is the allocator's central action.
+
+The allocator picks a compliant slot; the `Decider` protocol returns `(action, reason)`
+and discards it; the worker passed `execute_at=None`; the guard correctly refused an
+execution that does not name when it runs. Four components, each individually correct,
+with the defect living in the seam between them — the seam this section names and which
+the simulator, by calling `Guard` directly, does not cross.
+
+Every test was green. The 300-world sweep was green. C7's adversarial search was green.
+None of them run the composition that only exists in production.
+
+It was found by `python -m recovery.explain` printing the block reason, not by a test.
+Full write-up in `CHALLENGES.md` 017; the composition is now covered end to end by
+`tests/test_explain_wiring.py`.
+
+**What this changes about how to read the rest of this document.** Item 8 was written as
+a risk and was accurate, and writing it down did not prevent the defect or shorten the
+time to finding it. **Naming a threat is not the same as having something that fails when
+it occurs.** The other items here should be read with that in mind: they are hypotheses
+about where evidence is thin, not controls. Where an item can be turned into a test that
+fails, it should be — item 8 now has one, and the others do not.
+
 ## 9. Failure modes with no observability
 
 Listed because absence of an alarm is itself a threat:

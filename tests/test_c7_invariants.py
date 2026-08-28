@@ -18,6 +18,7 @@ clean run proves only that the assertions are unreachable.
 
 from __future__ import annotations
 
+import itertools
 import os
 import pathlib
 
@@ -69,17 +70,34 @@ scenarios = st.builds(
 )
 
 
+# One database per example. `tmp_path` is function-scoped and Hypothesis reuses
+# it across every example in a single test -- the `function_scoped_fixture`
+# health check is suppressed precisely so it can -- so all several hundred
+# examples previously shared one filename, deleted and recreated each time.
+#
+# On Windows, unlinking a SQLite file whose handle has not been released raises
+# PermissionError, which fails the example for a reason that has nothing to do
+# with the invariant under test. `execute` opens the store before it can return
+# it, so any exception raised inside it leaves a handle the caller never sees
+# and cannot close.
+#
+# Unique names make that collision impossible rather than merely unlikely. It is
+# a *candidate* explanation for an intermittent failure that was observed once
+# and has not reproduced in 32 full-suite runs -- see THREAT_MODEL.md. Fixing it
+# is worthwhile whether or not it was the cause: a test that can fail for
+# reasons unrelated to its subject is not evidence about its subject.
+_example_counter = itertools.count()
+
+
 def run(scenario: Scenario, config, classifier, tmp_path: pathlib.Path) -> list:
-    db_path = tmp_path / "hypothesis.db"
-    for suffix in ("", "-wal", "-shm"):
-        candidate = db_path.with_name(db_path.name + suffix)
-        if candidate.exists():
-            candidate.unlink()
-    store, trace = execute(scenario, config, classifier, db_path)
+    db_path = tmp_path / f"hypothesis-{next(_example_counter)}.db"
+    store = None
     try:
+        store, trace = execute(scenario, config, classifier, db_path)
         return check(scenario, store, trace, config)
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -262,6 +280,8 @@ def test_crashed_job_is_reclaimed_not_dropped(config, classifier, tmp_path):
     the store, so a worker dying between claim and finish abandoned the event
     permanently.
     """
+    from datetime import datetime, timedelta, timezone
+
     from recovery.fixtures import build_delivery
     from recovery.gateway import SimulatedGateway
     from recovery.ingest import ingest_delivery
@@ -279,10 +299,30 @@ def test_crashed_job_is_reclaimed_not_dropped(config, classifier, tmp_path):
     assert store.claimed_job_count() == 1
     assert store.decision_count() == 0
 
-    impatient = config.model_copy(
-        update={"worker": config.worker.model_copy(update={"claim_timeout_seconds": 0.001})}
+    # Backdate the claim rather than racing the clock.
+    #
+    # This previously set `claim_timeout_seconds` to 0.001 and relied on real
+    # time passing. The reclaim condition is `claimed_at < now - timeout`, so a
+    # 1ms timeout asked whether the two statements between the claim and the
+    # reclaim took longer than a millisecond -- and on a fast machine they do
+    # not. The test failed *for being quick*, about one run in four, reporting
+    # `assert 1 == 0`: an intermittent failure whose message said nothing about
+    # timing. See THREAT_MODEL.md.
+    #
+    # An hour in the past makes the elapsed time unambiguous at any speed. What
+    # is under test is that a stale claim is reclaimed and its work completed,
+    # not the resolution of the system clock.
+    stale = datetime.now(timezone.utc) - timedelta(hours=1)
+    with store.transaction() as conn:
+        conn.execute(
+            "UPDATE jobs SET claimed_at = ? WHERE state = 'claimed'",
+            (stale.isoformat(),),
+        )
+
+    patient = config.model_copy(
+        update={"worker": config.worker.model_copy(update={"claim_timeout_seconds": 30.0})}
     )
-    process_pending(store, impatient, gateway, classifier)
+    process_pending(store, patient, gateway, classifier)
 
     assert store.claimed_job_count() == 0
     assert store.decision_count() == 1
