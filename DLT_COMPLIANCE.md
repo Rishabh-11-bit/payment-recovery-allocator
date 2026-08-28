@@ -7,7 +7,7 @@ This is unresolved. Both readings are defensible, they carry materially differen
 obligations, and the contact policy in `allocator/decisions.py` currently assumes
 one of them without having established it.
 
-> **DRAFT.** Items marked **[INFERRED]** are my understanding of the DLT framework
+> **Provenance.** Items marked **[INFERRED]** are my understanding of the DLT framework
 > rather than something verified against TRAI's regulations or a DLT registrar's
 > documentation. **I have not read the primary regulation.** The framing of the
 > question is from `CLAUDE.md` "Still open"; the detail around it is reconstruction

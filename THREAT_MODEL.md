@@ -8,9 +8,10 @@ not model it, or because the property tests assert something narrower than the c
 they appear to support. None of them has a proposed fix here; a mitigation written
 next to a threat tends to get read as the threat being handled.
 
-> **DRAFT — inference markers.** Items marked **[INFERRED]** are my reconstruction of
-> the failure mode rather than something stated in the repo. The mechanism may be
-> wrong even where the concern is real.
+> **Provenance.** Items marked **[INFERRED]** are my reconstruction of the failure
+> mode rather than something stated in the repo. The mechanism may be wrong even
+> where the concern is real, and they are marked so a reader can attack the
+> reasoning rather than have to find it first.
 
 ---
 

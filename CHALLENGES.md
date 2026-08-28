@@ -436,7 +436,7 @@ single one agreed with me.
 **Date:** Phase 1
 **Tags:** `#domain` `#compliance` `#architecture`
 
-**Status:** OPEN — recorded before C4 rather than resolved. See Resolution.
+**Status:** RESOLVED in Phase 3, by documentation rather than by choosing. See Resolution.
 
 **Problem**
 All five captured test-mode failures came back against a single `order_id`. My first reading
@@ -487,9 +487,30 @@ Candidates, none chosen yet:
    rather than something inferred later
 
 **Resolution**
-**Not resolved.** Deferred deliberately: the fix touches the allocator's budget reasoning (C3)
-and the guard's cap check (C4), and both are hand-authored. Fixing the counter before the
-policy that reads it exists would be guessing at the interface.
+**Deferred first, then resolved — and the deferral is why the resolution is not a guess.**
+
+*Phase 1, deferred.* The fix touches the allocator's budget reasoning (C3) and the guard's
+cap check (C4), both hand-authored. Fixing the counter before the policy that reads it
+existed would have meant guessing at the interface.
+
+*Phase 3, resolved.* Razorpay's own documentation settles both halves, and neither had to
+be inferred:
+
+- **A manual charge attempt does not count toward the remaining retries.** Stated
+  directly. So the two counters are real, and the platform draws the line where the
+  diagnosis above said it was.
+- **`auth_attempts` on the subscription payload is the authoritative execution count** —
+  1 on `subscription.pending`, 4 on `subscription.halted`.
+
+The guard now takes `auth_attempts` on the `GuardRequest` and lets it **win outright** over
+the `chain_attempts` heuristic, which survives only as the fallback for a case that has
+seen no subscription event yet. That ordering is the point: the authoritative number is
+used when it exists, and the inferred one is visibly a fallback rather than a peer.
+
+This is also why the asymmetry argument in the Diagnosis did not have to be acted on. The
+plan had been to pick the safe direction and over-count. Waiting meant not having to pick
+at all — **the system now records which attempts it initiated instead of inferring it**,
+which is what the entry said the right answer would look like.
 
 Recorded now, with a note added to `CLAUDE.md` under the regulatory constraints, so the
 distinction is visible before C4 starts rather than rediscovered inside it.

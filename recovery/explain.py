@@ -26,7 +26,6 @@ view is a filter over the record, never a different record.
 from __future__ import annotations
 
 import pathlib
-import sys
 
 import typer
 

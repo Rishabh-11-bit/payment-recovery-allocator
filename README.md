@@ -160,19 +160,26 @@ per case and the crossover can be computed rather than swept. The sweep is the r
 instrument only for open-ended subscriptions, where the horizon genuinely is unknown.
 Treating every case as open-ended was leaving observable information on the table.
 
-Over **300 sampled worlds per range set**, which is the figure that counts:
+Over **100 sampled worlds per range set** — the default, so this table is what
+`python -m recovery.reproduce` prints with no arguments:
 
 | | vs A | vs B |
 |---|---|---|
-| C ahead by 6 months | 79% | 78% |
-| C ahead by 12 months | **83%** | **90%** |
-| C ahead by 24 months | 87% | 95% |
-| Crossover p10 / median / p90 | 0.3 / 2.3 / 12.7 months | 0.7 / 2.9 / 10.3 |
-| Ahead from the start | 117 worlds | 7 |
-| Never overtakes | 33 worlds | 9 |
+| C ahead by 6 months | 77% | 80% |
+| C ahead by 12 months | **80%** | **89%** |
+| C ahead by 24 months | 83% | 94% |
+| Crossover p10 / median / p90 | 0.4 / 1.8 / 8.0 months | 0.7 / 2.8 / 8.6 |
+| Ahead from the start | 37 worlds | 2 |
+| Never overtakes | 15 worlds | 5 |
 
 Arm B wins cycle recovery in **97% of worlds**. Arm C's case is entirely the horizon, and
 that is stated rather than buried.
+
+**Why 100 and not more.** Every figure in this README comes from the default invocation,
+so a reader who clones this and runs one command gets these numbers and not a nearby set.
+`--sweep-worlds 300` is stronger and moves them in C's favour — 83% and 90% at twelve
+months — but a README that quotes a run the default does not produce is a README that
+cannot be checked in the thirty seconds a reviewer will give it.
 
 **Three conditions inside the calibrated ranges make this claim fail.** They belong next
 to the claim rather than eighty lines below it, so they are named here and worked through
@@ -180,13 +187,22 @@ in [Where it breaks](#where-it-breaks):
 
 | Condition | Against | Loss rate inside | Outside |
 |---|---|---|---|
-| `class_mix_INFRASTRUCTURE` above ~0.301 | A | **30%** of 119 worlds | 8% of 181 |
-| `class_mix_TERMINAL` below ~0.287 | A | **25%** of 180 worlds | 5% of 120 |
-| `revocation_per_notification` below ~0.0137 | B | **33%** of 30 worlds | 8% of 270 |
+| `fatigue_multiplier` below ~1.218 | A | **40%** of 20 worlds | 15% of 80 |
+| `class_mix_TERMINAL` below ~0.287 | A | **28%** of 60 worlds | 8% of 40 |
+| `revocation_per_notification` below ~0.0155 | B | **30%** of 20 worlds | 6% of 80 |
 
 An earlier version of this README said no condition separated wins from losses inside the
 calibrated ranges. Three now do, and they arrived from making the model *more* accurate
 rather than less — see below.
+
+**The stump search is sample-size sensitive, and that is worth knowing before it is used
+against the result.** Rerun at `--sweep-worlds 300` and the nominal-vs-A pair becomes
+`class_mix_INFRASTRUCTURE` above ~0.301 and `class_mix_TERMINAL` below ~0.287.
+`class_mix_TERMINAL` at the same threshold is the one condition stable across both sizes;
+`fatigue_multiplier` and `class_mix_INFRASTRUCTURE` trade places with the sample. The
+mechanism each names is real — what is unstable is which one ranks first, because a
+decision stump reports a single best split and several are close. Treat the set as the
+finding, never the ordering.
 
 **These figures are weaker than the ones this README carried before the rail-conditional
 revocation hazard landed, and the reason is worth stating.** Revocation was previously
@@ -228,7 +244,7 @@ notification.
 The check is not "it matches the stub" — that is a weak test, because two
 matrices can agree by accident. The cost matrix is deliberately rewritten so
 the LOW band resolves to a *different* class (ATTENTION instead of TERMINAL),
-and the full 300-world run is repeated. Two lines of output change: the two C2
+and the full sweep is repeated. Two lines of output change: the two C2
 demonstration rows that print the resolved class. Every figure in this
 README — the seed-42 table, the win rates, the crossover percentiles, the
 breaking points — is byte-identical.
@@ -253,18 +269,34 @@ calibrated ranges rather than only under stress:
 
 | Condition | Against | Loss rate inside | Outside |
 |---|---|---|---|
-| `class_mix_INFRASTRUCTURE` above ~0.301 | A | 30% of 119 worlds | 8% of 181 |
-| `class_mix_TERMINAL` below ~0.287 | A | 25% of 180 worlds | 5% of 120 |
-| `revocation_per_notification` below ~0.0137 | B | 33% of 30 worlds | 8% of 270 |
+| `fatigue_multiplier` below ~1.218 | A | 40% of 20 worlds | 15% of 80 |
+| `class_mix_TERMINAL` below ~0.287 | A | 28% of 60 worlds | 8% of 40 |
+| `revocation_per_notification` below ~0.0155 | B | 30% of 20 worlds | 6% of 80 |
+
+`fatigue_multiplier` ranking first is the sharpest of these, and the least comfortable.
+It governs how much each *additional* notification compounds revocation risk — below
+roughly 1.22 the third notice is barely worse than the first, so the hazard stops
+compounding, and compounding is the entire thing Arm C's withholding buys. Its range in
+`config/worlds.yaml` is `[1.15, 1.60]`, so **the breaking point sits just above the
+range's own floor.** There is no published figure to say whether that floor is right.
 
 Under stress ranges deliberately widened past calibration the same conditions sharpen,
 and `rail_mix_emandate` joins them:
 
-> C loses where `revocation_per_notification` is below ~0.0103 — **40%** of those worlds
-> against A, **57%** against B, versus 6–13% elsewhere. Against A three more clear the
-> threshold: `class_mix_INFRASTRUCTURE` above ~0.504 and `rail_mix_emandate` above ~0.139
-> (both 41% of 29 worlds against 13%), and `class_mix_TERMINAL` below ~0.064 (40% of 30
-> against 13%).
+> C loses where `revocation_per_notification` is below ~0.0215 — **40%** of those worlds
+> against A, and below ~0.0150 **50%** against B, versus 6–13% elsewhere. Against A four
+> more clear the threshold: `class_mix_INFRASTRUCTURE` above ~0.418 (53% of 19 worlds
+> against 14%), `rail_mix_emandate` above ~0.129 (47% against 15%), `class_mix_TERMINAL`
+> below ~0.116 (45% against 15%), and `emission_fidelity` below ~0.823 (27% of 70 worlds
+> against 7%).
+
+**`emission_fidelity` is the one to volunteer.** Arm C is the only arm that *acts on* the
+class, so it is the only arm a mis-reported class can degrade; A and B ignore the
+classification entirely and are structurally immune to its being wrong. A cause-aware
+allocator's advantage over a cause-blind one is bounded above by how well the cause can be
+read, and below roughly 0.82 the reading is poor enough that knowing-why stops paying for
+itself. Inside the calibrated range it separates nothing. That is this project's own
+precondition, and the sweep found it rather than the prose asserting it.
 
 The mechanism is plain: if repeated failure notifications cost few mandates, protecting
 mandates buys little and contacting everyone wins. That parameter is the least evidenced
@@ -293,8 +325,8 @@ under which Arm C loses sit **outside those ranges**:
 
 | Condition | Loss rate inside | Outside |
 |---|---|---|
-| `class_mix_INFRASTRUCTURE` above ~0.504 | 41% of 29 worlds | 13% of 271 |
-| `class_mix_TERMINAL` below ~0.064 | 40% of 30 worlds | 13% of 270 |
+| `class_mix_INFRASTRUCTURE` above ~0.418 | 53% of 19 worlds | 14% of 81 |
+| `class_mix_TERMINAL` below ~0.116 | 45% of 20 worlds | 15% of 80 |
 
 The old sweep **structurally could not sample either region**, however many worlds it drew.
 A sweep confined to a guessed range does not test the guess; it tests everything except the

@@ -25,7 +25,8 @@ What we control is how precisely it is characterised.
 ## Thesis
 
 > Retry volume is capped at four attempts by NPCI. Execution is barred from peak hours and
-> requires 24h advance notice. There is almost no timing freedom left — so the highest-value
+> requires advance notice of 25h on UPI and 36h on cards. There is almost no timing freedom
+> left — so the highest-value
 > decision is **not spending an attempt on a failure that cannot recover.** The documented
 > baseline spends three of four attempts on expired cards and cancelled mandates.
 
@@ -108,14 +109,22 @@ sources, primary circular not publicly indexed — cite as such).
 - **Moderated TPS:** PSPs directed to initiate executions at moderated TPS; NPCI may apply
   rate limiters to avoid spikes. *This is the regulatory basis for the storm governor — not a
   speculative feature.*
-- **Pre-debit notification:** customer must receive SMS/app notification ≥24h before each
+- **Pre-debit notification:** customer must receive SMS/app notification before each
   recurring charge, with exact amount and cancel option. **If the PDN fails, the debit fails —
   it is a prerequisite.** PDN requests at/after 23:50 are rejected when debit_date = T+1.
+
+  **The lead time is rail-specific, and ≥24h is the wrong number to design against.**
+  NPCI's floor is 24h; the operative figures are **25h for UPI** — the notice must land a
+  clear day ahead — and **36h for cards**, because above the AFA threshold the
+  authentication link is valid 72h and the notice therefore goes out earlier. Both are in
+  `config/default.yaml` under `regulatory.pdn_lead_time_hours_by_rail`, and the guard reads
+  them per rail. A flat 24h passes the regulator and fails the API.
 - **AFA:** transactions over ₹15,000 require PIN entry each time.
 - Non-compliance: UPI API access restrictions, penalties, onboarding suspension.
 
 **Consequence: `ATTEMPT_NOW` does not exist for mandate debits.** Every attempt is decided
-≥24h ahead and must land in a non-peak window. Do not propose sub-daily retry timing.
+≥25h ahead on UPI (≥36h on cards) and must land in a non-peak window. Do not propose
+sub-daily retry timing.
 
 ### Two counters, not one — read before building C4
 
@@ -133,9 +142,12 @@ This is observable in the captured fixtures: all five real payments share one `o
 is not a capture artefact — a Payment Link resolves every attempt to the same order, so a
 customer retrying a recovery link three times produces exactly that shape in production.
 
-**Current code conflates them** — `chain_attempts` in the store, and `attempts_used` in the
-simulator, both treat any payment in the chain as budget spend. Unresolved on purpose: the fix
-touches C3's budget reasoning and C4's cap check, both hand-authored. See `CHALLENGES.md` 008.
+**RESOLVED — see `CHALLENGES.md` 008.** Razorpay's documentation settles it: a manual
+charge attempt does not count toward the remaining retries, and `auth_attempts` on the
+subscription payload is the authoritative execution count (1 on `subscription.pending`, 4 on
+`subscription.halted`). The guard now takes `auth_attempts` and lets it win outright over the
+`chain_attempts` heuristic, which stays only as the fallback for a case with no subscription
+event yet. The distinction is recorded rather than inferred.
 
 The error is asymmetric. Over-counting surrenders mandates that still have executions left —
 safe, invisible, and a direct loss of recoverable money. Under-counting breaches the cap, with
@@ -319,7 +331,9 @@ non-peak window, PDN lead time with the 23:50 cutoff, prior-attempt-resolved (Em
 contact budget, contact cooldown, order validity and expiry,
 payment-not-already-succeeded, idempotency key
 `recovery:{payment_id}:{policy_version}:{attempt_n}`. Storm governor (jitter + per-issuer
-admission ceiling) is C11 and not yet built.
+admission ceiling) is C11, in `recovery/governor.py`. It also consumes Razorpay's
+Downtime webhook, keying `instrument_schema` per method — UPI by handle or PSP, cards by
+issuer or network, netbanking by bank.
 
 The guard is deliberately separate from the allocator: an allocator that polices itself
 cannot be audited against its own rules, and every arm must face identical admission rules

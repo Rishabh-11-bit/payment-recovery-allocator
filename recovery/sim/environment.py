@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from recovery.classifier import CostModel
 from recovery.guard import Guard, GuardRequest, ProposalKind
-from recovery.models import FailureClass, PaymentStatus
+from recovery.models import PaymentStatus
 from recovery.sim.batch import SyntheticFailure
 from recovery.sim.calendar import IST, ComplianceCalendar
 from recovery.sim.metrics import ArmMetrics

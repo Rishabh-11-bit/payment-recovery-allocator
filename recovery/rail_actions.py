@@ -43,7 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from recovery.models import Classification, ConfidenceBand, DecisionAction, FailureClass
+from recovery.models import Classification, DecisionAction, FailureClass
 
 # Documented migration graph. UPI and Emandate can only move to Card; Card is
 # the hub. Every edge is an offer the customer acts on, never a switch.

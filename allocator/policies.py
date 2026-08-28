@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from recovery.models import ConfidenceBand, FailureClass
+from recovery.models import FailureClass
 from recovery.sim.environment import CaseView
 
 # Documented migration graph. UPI and Emandate can only move to Card; Card is

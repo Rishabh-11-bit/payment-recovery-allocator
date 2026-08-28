@@ -1,9 +1,9 @@
 """C2 machinery.
 
 These test the machinery, not the taxonomy. The mapping in
-`config/classifier.yaml` is a stub and its rows are illustrative, so nothing
-here asserts that a particular key *should* be a particular class -- that is
-authored content and its tests belong with it. What is asserted is that the
+`config/classifier.yaml` is authored, and nothing here asserts that a
+particular key *should* be a particular class -- that is authored content and
+its tests belong with it, in `tests/test_taxonomy_rows.py`. What is asserted is that the
 loader is strict, the ladder bands correctly, unmapped keys are never silently
 defaulted, and low confidence resolves toward the cheaper error.
 """

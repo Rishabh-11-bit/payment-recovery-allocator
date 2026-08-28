@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Mapping
 
 from recovery.models import AuditEvent, AuditEventType
 from recovery.store import Store

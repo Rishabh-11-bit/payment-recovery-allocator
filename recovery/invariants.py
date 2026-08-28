@@ -46,11 +46,10 @@ import enum
 import pathlib
 import random
 from dataclasses import dataclass, field
-from typing import Sequence
 
 from recovery.classifier import Classifier
 from recovery.config import Config
-from recovery.guard import Guard, GuardRequest, ProposalKind, guard_from_config
+from recovery.guard import GuardRequest, ProposalKind, guard_from_config
 from recovery.models import PaymentStatus
 from recovery.sim.calendar import IST, calendar_from_config
 from recovery.fixtures import build_delivery

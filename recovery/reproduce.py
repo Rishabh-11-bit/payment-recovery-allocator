@@ -6,7 +6,8 @@ Today that is three:
   decision, with the full sequence visible in the audit trail.
 * **C2** -- an unmapped key is distinguishable from a real classification: it
   reports `mapped=False`, zero confidence, a LOW band, and may not exclude an
-  instrument. The classes shown are illustrative while the taxonomy is a stub.
+  instrument. The taxonomy is authored (`status: AUTHORED`), so the classes
+  shown are the real ones.
 * **C3 + C5** -- all three arms over one sampled world, with the compliance
   constraints enforced by the environment rather than by the arms. The figures
   printed are a single draw and are **not a result**: a defensible number needs
@@ -108,8 +109,10 @@ def main(
     ),
 ) -> None:
     config = load_config(config_path)
-    # allow_stub: the taxonomy is not authored yet. The gate exists so this is a
-    # deliberate choice rather than an accident -- and it is stated in the output.
+    # allow_stub is retained after the taxonomy was authored, deliberately: it is
+    # what lets this command still run against a stub if someone points --classifier
+    # at one. The gate stays a stated choice rather than an accident, and the NOTE
+    # below only prints when the file actually is a stub -- which it no longer is.
     classifier = load_classifier(classifier_path, allow_stub=True)
     store = _fresh_store(db_path)
     gateway = SimulatedGateway()

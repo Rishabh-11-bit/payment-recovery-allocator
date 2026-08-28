@@ -25,7 +25,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass, field
 
-from allocator.decisions import CARD_CHANGE, Cell, lookup
+from allocator.decisions import Cell, lookup
 from allocator.policies import (
     ExecutionCounter,
     RailAgnosticCells,
@@ -37,7 +37,7 @@ from recovery.classifier import Classifier
 from recovery.config import Config
 from recovery.models import Classification, ConfidenceBand, DecisionAction, FailureClass
 from recovery.normalize import normalize_entity
-from recovery.sim.calendar import IST, ComplianceCalendar
+from recovery.sim.calendar import ComplianceCalendar
 from recovery.sim.environment import ActionKind, CaseOutcome, CaseView, Proposal
 
 __all__ = ["ArmC", "Plan"]
