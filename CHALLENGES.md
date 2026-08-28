@@ -29,28 +29,22 @@ with no reversals reads as either trivial or dishonest.
 
 ## Tagging
 
-Tag each entry so they can be sorted when drafting the form answer.
-
 `#domain` `#architecture` `#data` `#evaluation` `#integration` `#safety` `#scope` `#compliance`
 
 ---
 
-## Shortlist for the form
+## Where to start
 
-Maintain this as you go. Target 3–4 entries, weighted toward `#domain`, `#evaluation`,
-and `#scope` — those show judgment. Pure `#integration` entries show persistence, which
-is less differentiating.
+Four entries carry most of the judgment, if you are reading rather than searching:
 
-| # | Entry | Tag | Why it earns a slot |
-|---|-------|-----|---------------------|
-| 1 | 001 — nearly built a duplicate | `#domain` `#scope` | Audited the incumbent's shipped stack before building, and let the result reframe the project rather than proceeding anyway |
-| 2 | 002 — evaluation measured my own assumptions | `#evaluation` `#data` | Identified that a synthetic-data uplift figure proves nothing, and split one claim into three with proof appropriate to each |
-| 3 | 003 — strongest result needs no invented probabilities | `#domain` `#evaluation` | Found a claim that rests on a definition rather than a parameter, by reading the retry model line by line |
-| 4 | 004 — half the action space does not exist | `#domain` `#architecture` | Discovered the platform cannot execute the actions the allocator was designed to select, in Phase 0 rather than at integration |
+- **017** — the allocator's main action was dead in production and every test was green
+- **002** — the evaluation was measuring its own assumptions
+- **009** — the safety invariant held perfectly while the system stopped working
+- **015** — a failure channel that contained something which was not a failure
 
-**Not shortlisted:** 005 is the same constraint as 004, found a second time as a naming
-problem. 004 is the discovery and the stronger entry; presenting both would spend two of four
-slots on one insight.
+**005 is deliberately kept despite duplicating 004.** It is the same constraint found a
+second time, as a naming problem rather than a platform one, and the fact that one
+constraint could hide inside two different mistakes is the point of leaving both.
 
 ---
 
@@ -1113,8 +1107,8 @@ later rather than sooner, which is the one piece of timing freedom NPCI leaves a
 entire content of the "better placement of surviving attempts" claim. On the live path
 every one of those decisions was refused at admission.
 
-The whole time, the simulator was green, the 300-world sweep was green, C7's adversarial
-search was green, and 443 tests were green.
+The whole time, the simulator was green, the sweep was green, C7's adversarial search was
+green, and every test in the suite was green.
 
 **Diagnosis**
 Four components, each correct:

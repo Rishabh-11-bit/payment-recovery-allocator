@@ -47,6 +47,7 @@ from recovery.ingest import ingest_delivery
 from recovery.invariants import UNGUARDED_HAZARDS, search as invariant_search
 from recovery.normalize import normalize_entity
 from allocator.arm_c import ArmC
+from allocator.decisions import table_rows
 from allocator.wiring import ArmCDecider
 from recovery.sim.arms import ArmA, ArmB
 from recovery.sim.calendar import calendar_from_config
@@ -155,6 +156,7 @@ def main(
         marker = f"[{event.event_type.value}]"
         typer.echo(f"    {event.seq:>3}  {marker:<36} {_detail(event.detail)}")
 
+    passed = _policy_table_section() and passed
     passed = _trace_cases_section(store, config, gateway, classifier) and passed
     passed = _c2_section(classifier) and passed
     passed = _c5_section(config, classifier, profile) and passed
@@ -165,6 +167,44 @@ def main(
     typer.echo("\nreproduce: " + ("OK" if passed else "FAILED"))
     if not passed:
         sys.exit(1)
+
+
+def _policy_table_section() -> bool:
+    """Print the twelve-cell decision table, generated from the table itself.
+
+    The policy is small enough to read out loud, and printing it from
+    `allocator/decisions.py` rather than transcribing it means a slide, a README
+    table and this output cannot drift apart -- only one of them is authored.
+
+    The `exec` column is the load-bearing one. It is stated per cell rather than
+    derived from the action, because the whole argument is that some recovery
+    actions cost a capped mandate execution and some cost nothing.
+    """
+    rows = table_rows()
+    spends = [row for row in rows if row[3]]
+    typer.echo("\n\nC3 policy -- the twelve-cell decision table\n")
+    typer.echo(f"    {'class':<15} {'band':<9} {'action':<21} {'exec':<5} rationale")
+    typer.echo("    " + "-" * 112)
+    for failure_class, band, action, spends_execution, rationale in rows:
+        mark = "YES" if spends_execution else "no"
+        typer.echo(
+            f"    {failure_class:<15} {band:<9} {action:<21} {mark:<5} {rationale}"
+        )
+    typer.echo(
+        f"\n    {len(spends)} of {len(rows)} cells spend a capped mandate execution. "
+        f"The other {len(rows) - len(spends)} cost none."
+    )
+    typer.echo(
+        "    The LOW row is uniform across all four classes by design: when the class\n"
+        "    is itself a guess, take the action that is right whichever cause is true."
+    )
+    typer.echo("")
+    return all(
+        [
+            _check("decision table cells", len(rows), 12),
+            _check("cells spending an execution", len(spends), 4),
+        ]
+    )
 
 
 # One delivery per cell worth looking at. Payment ids are fixed strings rather
