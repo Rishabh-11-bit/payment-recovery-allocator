@@ -36,15 +36,31 @@ command:
 | **Stopping rules** | `SURRENDER`, on two triggers: the mandate-execution budget is exhausted, or a contact was made and no execution is worth spending on this class. Recorded as a decision with a reason, never as an absence — and it surrenders the *attempt budget*, not the customer | `python -m recovery.explain pay_SYNTHEXPIRED01` |
 | **Audit trail** | Append-only, SQLite triggers block updates and deletes, every decision and every guard block reconstructable | `python -m recovery.explain --summary` |
 
-**On "agent".** This is an agent in the loop sense the brief describes — it perceives,
-diagnoses, decides under constraint, acts, and reconciles. What it deliberately is *not*
-is an LLM in the money path. An LLM parses free-text `error_description` into the schema;
-it never chooses an action. That boundary is a correctness argument, not a scope cut, and
-it is the argument in `NOT_BUILT.md`: with no real labels, a model trained here would
-learn the parameters of my own simulator and report the resulting uplift as a result.
-What is here instead is the part that is hard to get right — cost-sensitive decisions
-under an explicit confidence model, resolved toward the cheaper error when the class is
-itself a guess.
+**On "agent", stated plainly: there is no LLM in this repository.** Not in the decision
+path, not in parsing, nowhere. `grep -ri llm` returns one comment saying so. That is a
+deliberate position and it is worth being exact about rather than leaving to inference.
+
+This is an agent in the loop sense the brief describes — it perceives, diagnoses, decides
+under constraint, acts, and reconciles. What makes it one is the closed loop, not the
+presence of a model.
+
+**Why no model.** The classifier keys on `(method, source, step, reason)`, and all four
+are documented enum fields. They are already structured; there is nothing to infer. A
+model over them would be a lookup table with worse failure modes and no audit trail —
+and it could not be trained honestly anyway, because there are no real labels. The only
+labelled data here is five captured payloads and a synthetic batch whose classes I
+assigned. A model fitted to that learns my own emission table, and its accuracy would
+measure my consistency with myself (`CHALLENGES.md` 002).
+
+**Where a model would earn its place, and does not yet exist.** `error_description` is
+genuinely free text — *"try another payment method or contact your bank"* — and this
+system does not read it at all. Parsing it into the schema is the one place an LLM would
+add information rather than launder it. It is **not built**, and `NOT_BUILT.md` says so
+rather than the README implying otherwise.
+
+What is here instead is the part that is hard to get right: cost-sensitive decisions
+under an explicit confidence model, an asymmetric cost matrix, and minimax resolution
+toward the cheaper error when the class is itself a guess.
 
 **On the mandate retry sequencer.** The brief names it as a direction. This is that,
 taken literally and built to the depth where the constraint actually bites.

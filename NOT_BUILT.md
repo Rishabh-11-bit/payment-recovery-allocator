@@ -30,6 +30,32 @@ reader can *see and dispute*, because every row is a claim with a note attached.
 
 *Source: `CLAUDE.md` "Explicitly not built"; `CHALLENGES.md` 002.*
 
+### Free-text `error_description` parsing (the one place a model belongs)
+
+`error_description` is genuinely free text — a captured netbanking decline carries
+*"try another payment method or contact your bank"* — and this system does not read it
+at all. It classifies on `(method, source, step, reason)`, four documented enum fields
+that are already structured.
+
+**This is the single place in the project where an LLM would add information rather than
+launder it.** Enum fields need no model; free text does. Parsing it into the schema
+could separate cases the enums collapse together, and it would sit *before* the
+classifier, never inside the decision path — the parse is auditable as text-in,
+schema-out, and a wrong parse produces a visibly wrong key rather than a silently
+wrong action.
+
+Not built for two reasons, and only the second is about time. First, it adds a
+dependency and a network call to a path that is currently deterministic and offline,
+and every claim in this repo rests on `python -m recovery.reproduce` being
+reproducible — a model in that path makes the headline figures depend on an external
+service's version. Second, there are five captured payloads to evaluate a parser
+against, three of them duplicates by key, and no way to tell a good parse from a
+plausible one at that sample size.
+
+**Stated because the absence is conspicuous.** This is a submission for an AI track and
+it contains no model. The honest version of that is not to add one where it would not
+help, but to name the one place it would.
+
 ### Contextual bandits
 
 Same circularity, worse. A bandit does not just learn the generator's parameters, it

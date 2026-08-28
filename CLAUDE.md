@@ -257,8 +257,10 @@ documentation is incomplete. See `CHALLENGES.md` 007.
 | `card_enrollment_check` | Card not 3DS-enrolled | TERMINAL-adjacent |
 
 Four classes: `INFRASTRUCTURE`, `LIQUIDITY`, `ATTENTION`, `TERMINAL`. Deterministic rules over
-a lookup table. LLM only for parsing free-text `description` into schema — never in the
-decision path.
+a lookup table. **No LLM is built.** The four key fields are documented enums and need
+no parsing. Free-text `error_description` is the one place a model would add information,
+and reading it is deliberately not built — see `NOT_BUILT.md`. If it is ever built it
+parses into the schema and never enters the decision path.
 
 **Misclassification costs are asymmetric.** INFRASTRUCTURE→TERMINAL surrenders a recoverable
 payment. TERMINAL→INFRASTRUCTURE burns capped attempts and risks escalating a risk flag.
