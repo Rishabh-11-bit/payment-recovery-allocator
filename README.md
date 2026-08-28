@@ -17,6 +17,38 @@ ceiling, the open problem is not *retry better* — it is **how to allocate a sc
 budget** across failures with different recovery dynamics, and how to prove that allocation
 works without inventing the evidence.
 
+## Against the brief
+
+Track 03 asks for **an agent that detects revenue at risk, determines the right
+intervention, and executes a bounded recovery workflow**, and sets the bar at
+**measured money recovered across a batch, with compliant escalation, stopping rules,
+and an audit trail.** Each of those is a specific thing in this repo, verifiable by one
+command:
+
+| Asked for | Here | Verify |
+|---|---|---|
+| **Detects** revenue at risk | C1 ingests `payment.failed`, dedupes on `x-razorpay-event-id`, filters registration artefacts, and refreshes authoritative state before deciding — never trusting the webhook body, because late auth means a payload saying `failed` can describe a live payment | `python -m recovery.reproduce` — C1 block |
+| **Diagnoses** — root cause | C2 classifies `(method, source, step, reason)` into four causes with a confidence band | C2 block; `config/classifier.yaml` |
+| **Determines the intervention** | C3, a twelve-cell table over cause × confidence. Four of twelve spend a capped execution; the other eight send a contact and spend none | `allocator/decisions.py` |
+| **Executes** a **bounded** workflow | Bounded three ways: NPCI's 4-execution cap, a contact budget with cooldown, and a horizon. C4 admits every proposal or refuses it with a reason | `recovery/guard.py` |
+| **Measured money across a batch** | Three arms, 500 cases, identical batches, swept across 100 sampled worlds | C5 + C8 blocks |
+| **Compliant escalation** | Graduated by confidence, not by attempt number: recovery link → alternate channel → card-change offer (`OFFER_RAIL_MIGRATION`) → surrender. Every step is admitted or refused by C4 before it runs | `python -m recovery.explain --list` |
+| **Stopping rules** | `SURRENDER`, on two triggers: the mandate-execution budget is exhausted, or a contact was made and no execution is worth spending on this class. Recorded as a decision with a reason, never as an absence — and it surrenders the *attempt budget*, not the customer | `python -m recovery.explain pay_SYNTHEXPIRED01` |
+| **Audit trail** | Append-only, SQLite triggers block updates and deletes, every decision and every guard block reconstructable | `python -m recovery.explain --summary` |
+
+**On "agent".** This is an agent in the loop sense the brief describes — it perceives,
+diagnoses, decides under constraint, acts, and reconciles. What it deliberately is *not*
+is an LLM in the money path. An LLM parses free-text `error_description` into the schema;
+it never chooses an action. That boundary is a correctness argument, not a scope cut, and
+it is the argument in `NOT_BUILT.md`: with no real labels, a model trained here would
+learn the parameters of my own simulator and report the resulting uplift as a result.
+What is here instead is the part that is hard to get right — cost-sensitive decisions
+under an explicit confidence model, resolved toward the cheaper error when the class is
+itself a guess.
+
+**On the mandate retry sequencer.** The brief names it as a direction. This is that,
+taken literally and built to the depth where the constraint actually bites.
+
 ## What this is not
 
 Razorpay already ships in-session dynamic routing (Optimizer / Smart Router), a documented
@@ -51,14 +83,40 @@ difficulty only appears at depth.
 |---|---|
 | `CLAUDE.md` | Architecture, constraints, and hard rules |
 | `PRIOR_ART.md` | What exists at Razorpay and where this layer sits |
-| `CHALLENGES.md` | Running build log |
+| `CHALLENGES.md` | **What broke, and how I got out** — 18 entries, each with the diagnosis, the options rejected, and what it generalises to |
 | `ASSUMPTIONS.md` | Every parameter, marked ordinal or cardinal, with sources |
 | `NOT_BUILT.md` | Deliberately rejected scope, with reasons |
 | `THREAT_MODEL.md` | What breaks in production that does not break here |
 | `DLT_COMPLIANCE.md` | Open question: is a failure nudge promotional or transactional? |
 
-All four Phase 5 documents are drafted. Passages marked **[INFERRED]** in them are
-reconstruction rather than established fact and are pending review.
+Passages marked **[INFERRED]** are reconstruction rather than established fact, and are
+marked so a reader can attack the reasoning instead of having to locate it first.
+
+### What broke
+
+`CHALLENGES.md` is the longest document here and the one I would read first. Every entry
+is a real defect with the diagnosis, the options rejected and why, and what the failure
+generalises to. Four worth opening:
+
+- **017 — the allocator's main action was dead in production, and the simulator was
+  green.** `SCHEDULE_AT` could never have been admitted, for any case, ever. The allocator
+  chose a compliant execution slot; the decider protocol returned only `(action, reason)`
+  and discarded it; the guard correctly refused an execution that named no time. Four
+  components, each individually right. **The decision-trace CLI found it, not a test** —
+  it printed the block reason where a log would have recorded that nothing happened.
+- **002 — my evaluation was measuring my own assumptions.** The generator and the policy
+  shared a parameter, so the result was partly circular. This is why the taxonomy is never
+  fitted to the simulator's ground truth, and why there is no trained model.
+- **009 — the safety invariant held perfectly while the system quietly stopped working.**
+  A crashed worker abandoned its claimed jobs. Nothing was unsafe and nothing progressed.
+- **015 — not every failure is a failure.** UPI mandate registration fires a validation
+  debit that is *always* `status: failed`. It was opening cases, spending contacts, and
+  inflating the denominator of every reported figure — a false positive that scales with
+  the merchant's success.
+
+Two of those four (015, 017) were found in the last week of the build, which is the
+honest shape of it: the defects that survive longest are the ones where every component
+is individually correct.
 
 ## Running
 
