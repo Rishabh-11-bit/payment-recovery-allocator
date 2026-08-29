@@ -471,6 +471,20 @@ payloads for fixtures. `order.attempts` increments per failed attempt against an
   **Verify before relying on it**
 - Bank-holiday calendar for T−1 / T−3 shifting — which calendar, varies by bank?
 - Is a payment-failure nudge promotional or transactional under DLT? State both implications
+- **`cause_family` is recorded on `Classification` but never read by `allocator/decisions.py`
+  or `arm_c.py`.** The CELLS table is keyed on `(FailureClass, ConfidenceBand)` alone. Found
+  while building message content (`recovery/messaging.py`): the taxonomy section above
+  says an expired card and `international_transaction_not_allowed` are "same zero retry
+  probability, different remedy — and the allocator needs to tell them apart," and the row
+  for the latter says outright "nothing the customer does will help." The current table
+  sends `OFFER_RAIL_MIGRATION`/card-change-offer to both alike, at TERMINAL/HIGH — so a
+  contact is spent on a case the row's own note says is unrecoverable by any customer
+  action. **Not fixed here** — this is `allocator/decisions.py`, reserved. Two live
+  questions rather than an assumed answer: should this cell branch on `cause_family` (a
+  third dimension the table does not have today), or should specific cause families
+  route straight to `SURRENDER` from within the TERMINAL/HIGH cell? The message-content
+  layer works around it honestly in the meantime — see `recovery/messaging.py`'s docstring
+  — but the underlying action is what the allocator decides, and this note is not that.
 
 ## Definition of done
 

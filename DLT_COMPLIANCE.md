@@ -182,6 +182,13 @@ result than the policy deserves.
 classification, and that this is the compliance question with the most reach into
 the design.**
 
+**This is also why `recovery/messaging.py` generates content and stops.** The
+question above governs whether a message may be *sent*, and this project does not
+answer it. It does not follow that the *wording* is unknowable — `messaging.py`
+renders the actual sentence each contact kind would carry, with no import that
+could reach a network, so the design decision this question is actually about
+stays visible without pre-empting an answer this project is not positioned to give.
+
 ---
 
 ## What would settle it

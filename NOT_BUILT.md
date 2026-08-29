@@ -184,6 +184,14 @@ The open compliance question underneath — whether a payment-failure nudge is
 promotional or transactional — is a real one and is written up in
 `DLT_COMPLIANCE.md` rather than resolved.
 
+**What is built instead: `recovery/messaging.py` generates the actual customer-
+facing text, content only, structurally incapable of sending anything** — no
+import in that module can reach a network. Run `python -m recovery.messaging`
+to read every message a contact would carry. The line this draws: not sending
+is a compliance decision correctly deferred to whoever resolves the DLT
+question; not knowing what would have been sent is a different, avoidable gap,
+and this module closes that half.
+
 *Source: `CLAUDE.md` "Explicitly not built" and "Still open".*
 
 ### Multi-gateway abstraction
