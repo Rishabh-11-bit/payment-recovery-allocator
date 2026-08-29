@@ -363,6 +363,12 @@ FORBIDDEN_ATTRIBUTES = frozenset(
         # name stays on the forbidden list so reintroducing it as a policy input
         # is still caught.
         "remaining_lifetime_months",
+        # C13 output. The allocator reads `cause_family`, which is authored; it
+        # must never read the markers a model produced, nor the record of which
+        # model produced them. Enrichment is upstream of the decision and this
+        # is what keeps it there.
+        "markers",
+        "observations",
     }
 )
 

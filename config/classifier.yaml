@@ -46,6 +46,16 @@ source_space:
   # `bank` is here on the evidence of a real capture, not on the documentation.
   netbanking: [customer, business, internal, issuer_bank, bank, razorpay]
   emandate: [customer, bank, business, internal, gateway, issuer_bank, razorpay]
+  # Wallet and Cardless EMI are documented in the same reference and were absent
+  # here, which mattered more than it looks: a method with no entry passes the
+  # documented-source check *vacuously*, so the two captured wallet payloads were
+  # reporting `source_in_documented_space: True` without anything having been
+  # checked. Absent from the map read exactly like validated.
+  #
+  # Neither is a mandate rail, so neither can carry a recurring debit. They are
+  # here so the check means what it says, not because this system acts on them.
+  wallet: [customer, business, internal, issuer, razorpay]
+  cardless_emi: [customer, business, internal, network, issuer, razorpay]
 
 # Deliberately empty. An alias silently rewrites an observed value, so each one
 # needs a documented justification. Populate only with cause to.
@@ -70,13 +80,28 @@ source_aliases: {}
 # is eventually written for one it will validate rather than be rejected.
 step_space:
   card: [payment_initiation, payment_creation, payment_authentication,
-         payment_authorization, card_enrollment_check,
+         payment_authorization, payment_capture, card_enrollment_check,
          customer_onboarding, account_management]
+  # UPI exposes the widest step space of any method, and the request/response
+  # pairing is the useful part: `payment_debit_request` broke on the way to the
+  # bank, `payment_debit_response` means the bank answered and declined. One is
+  # infrastructure, the other is a decision by the customer's bank.
   upi: [payment_initiation, payment_creation, payment_authentication,
-        payment_authorization, payment_debit_response, mandate_creation,
+        payment_authentication_request, payment_authentication_response,
+        payment_authorization, payment_request,
+        payment_request_beneficiary_details, payment_response_beneficiary_details,
+        payment_debit_request, payment_debit_response,
+        payment_credit_request, payment_credit_response,
+        payment_status_request, payment_status_response, payment_response,
+        refund_request, mandate_creation,
         customer_onboarding, account_management]
   netbanking: [payment_initiation, payment_creation, payment_authentication,
                payment_authorization, customer_onboarding, account_management]
+  wallet: [payment_initiation, payment_creation, payment_authentication,
+           payment_authorization, payment_eligibility_check,
+           customer_onboarding, account_management]
+  cardless_emi: [payment_initiation, payment_creation, payment_authentication,
+                 payment_authorization, customer_onboarding, account_management]
   emandate: [payment_initiation, payment_creation, payment_authentication,
              payment_authorization, payment_debit_response, mandate_creation,
              customer_onboarding, account_management]
@@ -140,6 +165,30 @@ costs:
     LIQUIDITY: 2
     ATTENTION: 1
     TERMINAL: 6
+
+# --- Free-text enrichment (C13) ----------------------------------------------
+# AUTHORED. The marker -> cause_family map for `recovery/enrich.py`.
+#
+# The model returns MARKERS -- observations about what a customer-facing string
+# says. It never returns a class, a family, or a number. This table is where a
+# marker becomes a family, and it is authored for the same reason the taxonomy
+# is: a model that picked the family would be deciding, and the whole boundary
+# is that it parses.
+#
+# A family only ever changes what a CONTACT SAYS. It cannot change the class,
+# the band, the confidence, or whether an execution is spent -- `refine` copies
+# exactly one field and a test asserts every other field is untouched.
+#
+# `bank_referral` and `no_information` are deliberately absent. "Contact your
+# bank" is the single most common phrase in these strings and it identifies
+# nothing -- mapping it would manufacture a distinction the text does not make.
+enrichment:
+  families:
+    instrument_unusable: instrument
+    insufficient_balance: funding
+    customer_abandoned: cancel_reason_unknown
+    technical_fault: technical_error_opaque
+    merchant_configuration: merchant_configuration
 
 # --- Rules ------------------------------------------------------------------
 # Matched most-specific-first. An omitted field is a wildcard, so a rule naming

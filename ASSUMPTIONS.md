@@ -341,6 +341,49 @@ cardinal favouring Arm C. Its absence understates Arm C.
 
 ---
 
+## `contact.budget` — and what it cannot see
+
+**Classification:** STRUCTURAL, with a documented gap that bounds the whole claim
+**Location:** `config/default.yaml`, `guard:`
+
+The guard enforces a contact budget and a cooldown, and every arm faces the same
+one. What it counts is **messages this system sends**.
+
+### Razorpay contacts the customer independently, on every failure
+
+Razorpay emails and SMSes the subscriber on subscription start, successful charge,
+**payment failure**, action required, card change, **halt after three retry
+attempts**, and cancellation. None of that is initiated by, visible to, or
+suppressible from this layer.
+
+**So the contact budget is incomplete by construction**, and in the direction that
+matters. The mandate-survival argument is that repeated failure notifications push
+a customer toward revoking. If the platform is already sending one per failure,
+then:
+
+- **Arm A, which sends nothing itself, is not silent.** The documented baseline's
+  three retries generate three platform failure notices. The "attempts saved"
+  claim is unchanged — that is definitional — but the *notification* asymmetry
+  between arms is smaller than this model represents.
+- **Arm C's restraint is diluted.** Withholding a contact does not withhold the
+  platform's contact for the same failure.
+- **The direction is not obvious.** Fewer *executions* still means fewer platform
+  failure notices, since the platform notifies per failed charge. So Arm C reduces
+  platform contact indirectly, through the attempts it does not spend, while its
+  own withheld contacts matter less than modelled. Which effect dominates is not
+  determinable from anything published.
+
+Not modelled, because modelling it needs a delivery rate and a per-message
+revocation contribution for messages this system never sees. Recorded because a
+contact budget that silently means "our contacts" while being read as "all
+contacts" is the kind of gap that invalidates a comparison rather than adjusting
+it.
+
+**[INFERRED]** — the direction-of-bias reasoning above is mine. The platform's
+notification list is documented; what it does to the crossover is not.
+
+---
+
 ## `mandate.fatigue_multiplier`
 
 **Classification:** CARDINAL — unsourced extrapolation

@@ -115,6 +115,7 @@ class AuditEventType(str, enum.Enum):
     FAILURE_UNMAPPED = "failure.unmapped"
     FAILURE_SOURCE_UNDOCUMENTED = "failure.source_undocumented"
     CLASSIFICATION_COST_RESOLVED = "failure.cost_resolved"
+    FAILURE_ENRICHED = "failure.enriched"
     GUARD_BLOCKED = "guard.blocked"
     GUARD_ALLOWED = "guard.allowed"
 

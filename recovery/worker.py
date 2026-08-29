@@ -28,6 +28,7 @@ from typing import Protocol
 
 from recovery.classifier import Classifier
 from recovery.config import Config
+from recovery.enrich import refine
 from recovery.gateway import PaymentGateway, StateRefreshError
 from recovery.guard import Guard, GuardRequest, ProposalKind
 from recovery.models import (
@@ -233,6 +234,31 @@ def _classify(
                 "resolved_to": classification.failure_class.value,
                 "confidence": classification.confidence,
                 "basis": "lowest worst-case cost, not highest likelihood",
+            },
+        )
+
+    # C13. Reads `error_description`, the one free-text field on the payload,
+    # and may set `cause_family` -- which shapes what a contact SAYS and cannot
+    # change the class, the band, or whether an execution is spent. Offline by
+    # default: without a committed cache entry this is a no-op, which is why no
+    # figure in this repo depends on it having run.
+    classification, observations, family = refine(
+        classification,
+        snapshot.error_description,
+        classifier.config.enrichment_families,
+    )
+    if observations.source != "unavailable":
+        store.append_audit(
+            AuditEventType.FAILURE_ENRICHED,
+            case_id=case_id,
+            event_id=event_id,
+            detail={
+                "source": observations.source,
+                "markers": list(observations.markers),
+                "cause_family_applied": family,
+                # The text itself, so the parse can be disputed rather than
+                # taken on trust. An extraction nobody can check is not evidence.
+                "description": (snapshot.error_description or "")[:200],
             },
         )
 

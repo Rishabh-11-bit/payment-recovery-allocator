@@ -171,6 +171,9 @@ class ClassifierConfig:
     version: str
     source_space: Mapping[str, frozenset[str]]
     step_space: Mapping[str, frozenset[str]]
+    # Authored marker -> cause_family map for C13. Empty means enrichment is
+    # configured off, and `refine` then maps nothing and changes nothing.
+    enrichment_families: Mapping[str, str]
     source_aliases: Mapping[str, str]
     high_threshold: float
     moderate_threshold: float
@@ -491,6 +494,10 @@ def load_classifier(
         step_space={
             method: frozenset(str(v).strip().lower() for v in values)
             for method, values in (raw.get("step_space") or {}).items()
+        },
+        enrichment_families={
+            str(k).strip().lower(): str(v).strip().lower()
+            for k, v in ((raw.get("enrichment") or {}).get("families") or {}).items()
         },
         source_aliases={
             str(k).strip().lower(): str(v).strip().lower()

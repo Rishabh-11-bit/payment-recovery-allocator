@@ -154,6 +154,52 @@ If a merchant runs both:
 No coordination protocol exists. The one signal that would resolve it — an initiator
 tag on each attempt — is the same thing 008 says is needed and is not yet recorded.
 
+## 7b. A failed payment can succeed because the *customer* retried, not the bank
+
+The late-authorisation window is the documented reason a `payment.failed` can be
+followed by a `payment.captured` for the same transaction. It is not the only one,
+and the second reason is more common.
+
+Razorpay's webhook documentation states it directly: *"You may occasionally observe
+a `payment.failed` webhook followed by a `payment.captured` webhook for the same
+transaction. While late authorisation is a known reason for this, user-initiated
+retries, particularly with UPI transactions, also cause this sequence."*
+
+The mechanism: the customer's UPI attempt fails on a wrong PIN or a thin balance,
+their TPAP offers an immediate in-app retry, they take it, and it succeeds. The
+bank was never slow. The customer simply paid again, seconds later, through an app
+this system has no visibility into.
+
+**Why the existing mitigation covers it.** The worker refreshes authoritative
+payment state from the API before every decision and closes the case if the status
+resolved. That check does not care *why* the status changed, so it catches this
+for the same reason it catches late auth.
+
+**Why it is still worth naming separately.** The two have different time constants.
+Late auth resolves over three days of polling; a TPAP retry resolves in seconds —
+plausibly before our own webhook is even processed. So the ordering hazard is
+sharper: the refresh can race a success that has already happened. It is also a
+reason the recovery population is smaller than the raw `payment.failed` count
+suggests, which is a measurement point rather than a safety one.
+
+**[INFERRED]** — that TPAP retries resolve fast enough to race our own processing
+is reasoning from the flow, not a documented latency.
+
+## 7c. Webhook replay is available, and only for fifteen days
+
+Razorpay will replay events on request when the event is under **15 days** old, the
+webhook was enabled at the time, and the same signature applies. Bulk replay is not
+possible.
+
+That is the actual recovery window for an ingest outage. A non-2xx response retries
+with backoff for 24 hours and then the webhook is **disabled** — so an outage that
+outlives the backoff needs replay, and an outage nobody notices for a fortnight is
+unrecoverable. The dedup key makes replay safe to accept; nothing here makes it
+safe to *need*.
+
+Not built: no monitoring exists to notice a disabled webhook. Naming the window is
+what turns "we would replay" into a statement with a deadline on it.
+
 ## 8. The simulator's arms are not the production system
 
 Arms A and B are reimplementations. Arm C shares its decision table with the real

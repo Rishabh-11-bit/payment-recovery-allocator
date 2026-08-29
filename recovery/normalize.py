@@ -99,9 +99,17 @@ def normalize_entity(
         if allowed is not None:
             source_documented = parts["source"] in allowed
         else:
-            # A method we have no value space for at all -- `wallet` appears in
-            # real captures and is absent from the reference the space was built
-            # from. Nothing to check against, so nothing to surface.
+            # A method with no configured value space at all. Nothing to check
+            # against, so nothing is surfaced.
+            #
+            # **This is a vacuous pass and it reads exactly like a validated
+            # one.** `wallet` was the live example: two captured payloads
+            # reported `source_in_documented_space: True` while nothing had been
+            # checked, because `wallet` was missing from the map -- and it is
+            # documented in the same reference the other methods came from, so
+            # the gap was an omission rather than a limit of the source. Every
+            # documented method is now configured, which is what makes this
+            # branch rare enough to be honest.
             source_documented = True
 
     return NormalizedFailure(

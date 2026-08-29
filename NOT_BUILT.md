@@ -262,7 +262,7 @@ time" stays visible.
 | A real UPI Autopay capture | Test mode never exposed UPI. It is the project's primary rail and the least evidenced part of the classifier — the single highest-value fixture still missing. See `ASSUMPTIONS.md`. |
 | Static HTML report | First on the cut list. `reproduce` prints the same figures. |
 | Decision-trace CLI beyond `explain` | Second on the cut list; `explain` covers the case the panel will ask about. |
-| Chargeback penalty term | Third on the cut list. Razorpay's dispute phases escalate in cost — retrieval, chargeback, pre-arbitration, arbitration — so the penalty is a ladder, not a flat rate, and there is no source for the magnitudes. Disputes are also rare on authorised mandate debits. |
+| Chargeback penalty term | Third on the cut list, and the reason is narrower than "no source". The *cost* is observable: `amount_deducted` on the dispute entity is 0 while open or won and the full amount when lost, so a realised chargeback prices itself. What has no source is the **rate** — how often a recovery attempt provokes a dispute — and a penalty term needs the rate, not the price. Disputes are also rare on authorised mandate debits, where the customer already granted standing permission. |
 | Manual-recovery rate for halted subscriptions | Would make the `WORKING` survival basis non-degenerate. Nobody publishes it. |
 | Ingesting `subscription.pending` / `subscription.halted` | The mandate-level view of the same failures, carrying `auth_attempts` and `remaining_count`. `payment.failed` carries the error fields; both would be needed, joined on the chain. Four `mandate_creation_*` taxonomy rows are unreachable without it and are marked as such. |
 
