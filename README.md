@@ -134,7 +134,7 @@ difficulty only appears at depth.
 |---|---|
 | `CLAUDE.md` | Architecture, constraints, and hard rules |
 | `PRIOR_ART.md` | What exists at Razorpay and where this layer sits |
-| `CHALLENGES.md` | **What broke, and how I got out** — 18 entries, each with the diagnosis, the options rejected, and what it generalises to |
+| `CHALLENGES.md` | **What broke, and how I got out** — 20 entries, each with the diagnosis, the options rejected, and what it generalises to |
 | `ASSUMPTIONS.md` | Every parameter, marked ordinal or cardinal, with sources |
 | `NOT_BUILT.md` | Deliberately rejected scope, with reasons |
 | `THREAT_MODEL.md` | What breaks in production that does not break here |
@@ -185,6 +185,17 @@ python -m recovery.reproduce
 
 Recreates the database from scratch and regenerates every claim in this README.
 Nothing goes in this README that this command does not reproduce.
+
+For a single page instead of a terminal scroll:
+
+```
+python -m recovery.report
+```
+
+writes `reports/report.html` — the same figures above, computed by the same functions
+`reproduce.py` calls, not a second hand-typed copy of them. Gitignored: it is generated
+output, and a committed HTML file is exactly the kind of figure that goes stale silently
+once the code moves again, which is the thing this whole README exists to avoid.
 
 **C1 — event core.** Replaying one webhook delivery ten times produces exactly one
 case and one decision, with the full sequence visible in the audit trail: one
