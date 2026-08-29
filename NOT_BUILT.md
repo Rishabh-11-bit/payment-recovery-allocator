@@ -189,9 +189,15 @@ promotional or transactional — is a real one and is written up in
 ### Multi-gateway abstraction
 
 An interface over several PSPs. It would be speculative generality: there is one
-gateway in scope, the adapter boundary already exists (`SimulatedExecutor` primary,
-`RazorpayExecutor` demonstrated), and a second implementation is what would reveal
-whether the abstraction is right.
+gateway in scope, and the adapter boundary already exists twice over --
+`recovery/gateway.py` (`SimulatedGateway` / `RazorpayGateway`, the read side) and
+`recovery/executor.py` (`SimulatedExecutor` / `RazorpayExecutor`, the write side).
+Both `Razorpay*` classes are real, not stubs: `RazorpayGateway.fetch_payment` and
+`RazorpayExecutor.create_recovery_link` are exercised against Razorpay's live
+test-mode API in `tests/test_c10_live_executor.py`, skipped rather than faked when
+no key is present. A second gateway is still not built -- one real implementation
+was the thing worth proving; a second PSP is a different question this project has
+no reason to answer.
 
 *Source: `CLAUDE.md` "Explicitly not built".*
 

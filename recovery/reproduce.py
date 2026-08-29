@@ -32,6 +32,7 @@ event types -- is fully determined by the input.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
 import time
@@ -46,6 +47,7 @@ from recovery.guard import guard_from_config
 from recovery.ledger import Ledger
 from recovery.ingest import ingest_delivery
 from recovery.invariants import UNGUARDED_HAZARDS, search as invariant_search
+from recovery.models import Classification, ConfidenceBand, FailureClass
 from recovery.normalize import normalize_entity
 from allocator.arm_c import ArmC
 from allocator.decisions import table_rows
@@ -136,6 +138,13 @@ def main(
         help="Adversarial orderings to search for an invariant violation. "
         "The default keeps this command quick; raise it for a deeper search.",
     ),
+    live_razorpay: bool = typer.Option(
+        False,
+        "--live-razorpay",
+        help="Dispatch one real Payment Link via Razorpay's test-mode API. "
+        "Needs RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET. Off by default -- no "
+        "figure this command reports depends on this flag.",
+    ),
 ) -> None:
     config = load_config(config_path)
     # allow_stub is retained after the taxonomy was authored, deliberately: it is
@@ -191,6 +200,8 @@ def main(
         passed = _c5_section(config, classifier, profile) and passed
         passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
         passed = _c8_section(config, classifier, sweep_worlds, profile) and passed
+        if live_razorpay:
+            passed = _live_razorpay_section() and passed
     finally:
         # Always, not only on success. Without this a section that raises -- or
         # a run interrupted with Ctrl-C -- leaves the SQLite handle open, and on
@@ -340,6 +351,70 @@ def _trace_cases_section(store, config, gateway, classifier) -> bool:
     typer.echo("      python -m recovery.explain --db data/reproduce.db pay_SYNTHEXPIRED01")
     typer.echo("")
     return _check("trace cases decided", len(TRACE_CASES) if ok else 0, len(TRACE_CASES))
+
+
+def _live_razorpay_section() -> bool:
+    """C10 execution, live -- opt-in only, never part of the default run.
+
+    Every other network-touching component in this project (C13's model call,
+    this) is off unless explicitly asked for, on the same reasoning each time:
+    the headline figures must reproduce with no network at all, so nothing
+    reported can depend on this section having run. What it proves when it
+    does run is real: the allocator's own checkout shaping, dispatched as an
+    actual Razorpay Payment Link, with a real id and short_url back --
+    not a second simulation of the same claim the rest of this command
+    already makes.
+    """
+    from recovery.executor import ExecutionError, RazorpayExecutor
+    from recovery.rail_actions import build_shaping
+
+    typer.echo("\n\nC10 execution, live -- one real Razorpay Payment Link\n")
+
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    if not key_id or not key_secret:
+        typer.echo(
+            "    RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set -- skipping.\n"
+            "    Nothing else in this command depends on this section."
+        )
+        return True  # a skip, not a failure -- see the module docstring
+
+    payment_id, order_id, method, source, step, reason, _ = TRACE_CASES[0]
+    classification = Classification(
+        failure_class=FailureClass.TERMINAL,
+        confidence=0.99,
+        band=ConfidenceBand.HIGH,
+        key=normalize_entity({"method": method, "error_source": source,
+                               "error_step": step, "error_reason": reason}),
+        mapped=True,
+        rule_index=5,
+    )
+    shaping = build_shaping(classification, rail=method)
+
+    try:
+        executor = RazorpayExecutor(key_id=key_id, key_secret=key_secret)
+        result = executor.create_recovery_link(
+            reference_id=order_id,
+            amount_paise=49900,
+            description="payment-recovery-allocator -- C10 live demonstration",
+            shaping=shaping,
+        )
+    except (ValueError, ExecutionError) as exc:
+        typer.echo(f"    FAILED: {exc}")
+        return _check("live payment link created", 0, 1)
+
+    typer.echo(f"    id         {result.link_id}")
+    typer.echo(f"    short_url  {result.short_url}")
+    typer.echo(f"    status     {result.status}")
+    typer.echo(
+        "\n    Real, not simulated -- the allocator's card-change shaping for a\n"
+        "    TERMINAL/HIGH case, dispatched to Razorpay's test-mode API. Cancel it\n"
+        "    from the dashboard or via POST /v1/payment_links/{id}/cancel; nothing\n"
+        "    else in this repo reads it back."
+    )
+    return _check(
+        "live payment link created", 1 if result.link_id else 0, 1
+    )
 
 
 def _c2_section(classifier) -> bool:

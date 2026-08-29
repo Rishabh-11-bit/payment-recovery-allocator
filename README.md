@@ -474,6 +474,22 @@ already abandoned once. Reorder costs nothing if wrong; exclusion costs the reco
 `OFFER_RAIL_MIGRATION` builds an *offer* validated against the documented graph — manual
 charging of a domestic card is not supported, so there is no version that executes.
 
+**Dispatch is real, not simulated-only.** `recovery/executor.py` mirrors the gateway's
+adapter pattern: `SimulatedExecutor` is the default everywhere — the worker, every test,
+every reported figure — and `RazorpayExecutor` is stdlib `urllib` against Razorpay's
+actual test-mode Payment Links API, gated to `rzp_test_` keys at construction, the same
+guard `RazorpayGateway` already carried on the read side.
+
+```bash
+python -m recovery.reproduce --live-razorpay
+```
+
+dispatches one real link for the TERMINAL/HIGH trace case and prints back a real `id`
+and `short_url`. Off by default — no figure in this README depends on the network call
+having happened. `SCHEDULE_AT` gets no live counterpart, deliberately: there is no API
+that lets a third party force a mandate execution, the same reason `ATTEMPT_NOW` is
+absent from the action space at all.
+
 **C11 — storm governor.** Jitter plus a per-issuer admission ceiling. Regulatory basis:
 NPCI directs PSPs to initiate executions at moderated TPS and may apply rate limiters.
 Scheduling T+1 for every failure in a batch produces exactly that spike, aimed at

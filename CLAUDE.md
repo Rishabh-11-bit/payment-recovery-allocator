@@ -343,7 +343,14 @@ or the comparison measures which arm remembered the regulations. **Every block c
 reason, is audited, and is attributable per arm** — so "wanted to and could not" stays
 distinguishable from "chose not to".
 
-**Execute**: adapter pattern. `SimulatorExecutor` primary; `RazorpayExecutor` demonstrated only.
+**Execute**: adapter pattern, `recovery/executor.py`. `SimulatedExecutor` primary --
+in-memory, what every test and the default worker path run against.
+`RazorpayExecutor` is real: stdlib `urllib`, no SDK, dispatches the checkout shaping
+`rail_actions.py` already builds as an actual Razorpay Payment Link, gated to test-mode
+keys at construction. `SCHEDULE_AT` has no live counterpart deliberately -- there is no
+API that lets a third party force a mandate execution, the same reason `ATTEMPT_NOW`
+does not exist in the action space at all. `python -m recovery.reproduce --live-razorpay`
+dispatches one real link; every other figure this project reports needs no network call.
 
 ### Rail actions are graduated by confidence
 
