@@ -367,7 +367,11 @@ def _evaluate(rows: list[tuple[str, str, str]]) -> None:
 
     informative = 0
     uncached = 0
-    for _, reason, description in sorted({(p, r, d) for p, r, d in rows}, key=lambda r: r[1]):
+    # Dedupe on the DESCRIPTION, not on the payload. Two payments carrying the
+    # same string are one parse and one cache entry; keying the set on the
+    # payment id made every row distinct and printed five where three exist.
+    distinct_rows = sorted({(reason, description) for _, reason, description in rows})
+    for reason, description in distinct_rows:
         observations = observe(description)
         if observations.source == "unavailable":
             uncached += 1
@@ -383,10 +387,14 @@ def _evaluate(rows: list[tuple[str, str, str]]) -> None:
 
     typer.echo("")
     if uncached:
-        typer.echo(f"    {uncached} description(s) not cached. Run `--warm` with a key set.")
+        typer.echo(
+            f"    {uncached} of {len(distinct_rows)} distinct description(s) not cached. "
+            "Run `--warm` with a key set."
+        )
         return
     typer.echo(
-        f"    {informative} of {len(rows)} descriptions carry a distinction the enum did not.\n"
+        f"    {informative} of {len(distinct_rows)} distinct descriptions carry a "
+        "distinction the enum did not.\n"
     )
     typer.echo(
         "    Read this as a smoke test, not an accuracy figure. Three distinct strings\n"
