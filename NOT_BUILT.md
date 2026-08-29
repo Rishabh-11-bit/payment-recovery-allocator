@@ -30,31 +30,39 @@ reader can *see and dispute*, because every row is a claim with a note attached.
 
 *Source: `CLAUDE.md` "Explicitly not built"; `CHALLENGES.md` 002.*
 
-### Free-text `error_description` parsing (the one place a model belongs)
+### Free-text `error_description` parsing — BUILT, and measured
 
-`error_description` is genuinely free text — a captured netbanking decline carries
-*"try another payment method or contact your bank"* — and this system does not read it
-at all. It classifies on `(method, source, step, reason)`, four documented enum fields
-that are already structured.
+This entry used to say the one place a model belongs was not built. It is now C13,
+so what follows is the result rather than the reason.
 
-**This is the single place in the project where an LLM would add information rather than
-launder it.** Enum fields need no model; free text does. Parsing it into the schema
-could separate cases the enums collapse together, and it would sit *before* the
-classifier, never inside the decision path — the parse is auditable as text-in,
-schema-out, and a wrong parse produces a visibly wrong key rather than a silently
-wrong action.
+`llama3` via a local Ollama reads `error_description` and returns **markers** —
+observations about what the sentence says, never a class and never a number. An
+authored map in `config/classifier.yaml` turns a marker into a `cause_family`,
+which shapes what a contact says. It cannot touch the class, the band, or whether
+an execution is spent.
 
-Not built for two reasons, and only the second is about time. First, it adds a
-dependency and a network call to a path that is currently deterministic and offline,
-and every claim in this repo rests on `python -m recovery.reproduce` being
-reproducible — a model in that path makes the headline figures depend on an external
-service's version. Second, there are five captured payloads to evaluate a parser
-against, three of them duplicates by key, and no way to tell a good parse from a
-plausible one at that sample size.
+**Measured on the three distinct captured descriptions: one changed a
+classification.**
 
-**Stated because the absence is conspicuous.** This is a submission for an AI track and
-it contains no model. The honest version of that is not to add one where it would not
-help, but to name the one place it would.
+| enum key → band | markers | effect |
+|---|---|---|
+| `international_transaction_not_allowed` → HIGH | `merchant_configuration` | none — enum sufficed |
+| `payment_failed` → LOW | `bank_referral` | none — taxonomy already names the family |
+| `payment_cancelled` → LOW | `customer_abandoned` | sets `cause_family=cancel_reason_unknown` |
+
+The model was right all three times and mattered once. That is the shape to expect:
+it can only bite on a LOW band with no authored family, because everywhere else the
+enum key was already sufficient — **which is the argument for a deterministic
+classifier, not an apology for one.**
+
+Three strings cannot measure a parser, and the interesting case is missing
+entirely: UPI is the primary rail, test mode never exposed it, and no UPI
+description has been read by anything.
+
+**What stayed out.** A hosted API. It would put a key and an external service
+inside the path `python -m recovery.reproduce` has to keep reproducible, and the
+version behind that endpoint is not something this repo can pin. Local inference
+plus a committed cache gives the same evidence with neither.
 
 ### Contextual bandits
 

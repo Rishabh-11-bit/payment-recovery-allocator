@@ -1,0 +1,8 @@
+{
+  "description": "Your payment didn't go through as it was declined by the bank. Try another payment method or contact your bank.",
+  "markers": [
+    "bank_referral"
+  ],
+  "model": "llama3:latest",
+  "prompt_version": "1"
+}

@@ -1,0 +1,8 @@
+{
+  "description": "Your payment could not be completed as this business accepts domestic (Indian) card payments only. Try another payment method.",
+  "markers": [
+    "merchant_configuration"
+  ],
+  "model": "llama3:latest",
+  "prompt_version": "1"
+}

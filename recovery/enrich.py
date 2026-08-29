@@ -1,7 +1,7 @@
 """C13 — free-text enrichment. The only model in the project, and the only place one belongs.
 
     python -m recovery.enrich --evaluate     # does the text add anything over the enum?
-    python -m recovery.enrich --warm         # populate the cache (needs ANTHROPIC_API_KEY)
+    python -m recovery.enrich --warm         # populate the cache (needs a local Ollama)
 
 The classifier keys on `(method, source, step, reason)` — four documented enum
 fields. They are already structured, so there is nothing for a model to infer and
@@ -63,7 +63,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import os
 import pathlib
 import urllib.error
 import urllib.request
@@ -78,10 +77,17 @@ app = typer.Typer(add_completion=False, help=__doc__)
 # key, so a changed prompt cannot silently reuse parses made under the old one.
 PROMPT_VERSION = "1"
 
-# Extraction, not reasoning. The task is "which of these six things does this
-# sentence say", which is what a small fast model is for.
-MODEL = "claude-haiku-4-5-20251001"
-API_URL = "https://api.anthropic.com/v1/messages"
+# Extraction, not reasoning: "which of these six things does this sentence say".
+# A local 8B model is sufficient for that, and brings two properties a hosted API
+# cannot: no key to distribute, and no external service inside a pipeline whose
+# entire claim is that `python -m recovery.reproduce` is reproducible.
+#
+# `llama3.2:1b` is also installed locally and is deliberately not used. At 1B the
+# failure mode is malformed structure rather than a wrong answer, and a parser
+# that cannot be trusted to return the agreed shape pushes its work onto the
+# caller -- which is the opposite of what this component is for.
+MODEL = "llama3:latest"
+API_URL = "http://localhost:11434/api/generate"
 
 CACHE_DIR = pathlib.Path("tests/fixtures/parsed")
 
@@ -187,39 +193,37 @@ def write_cache(
     return path
 
 
-def call_model(description: str, *, timeout: float = 20.0) -> Observations:
-    """One HTTPS call via stdlib. No SDK, so no dependency is added.
+def call_model(description: str, *, timeout: float = 120.0) -> Observations:
+    """One HTTP call to a local Ollama server via stdlib. No SDK, no dependency.
 
-    Returns `unavailable` rather than raising on every failure path: no key, no
-    network, a non-200, a body that is not JSON, or JSON that is not the agreed
-    shape. Enrichment is optional and the caller must never have to handle it.
+    `format: json` makes Ollama constrain decoding to valid JSON, and
+    `temperature: 0` makes the same string yield the same parse -- which is what
+    lets a committed cache be a faithful record of the model rather than one
+    sample from it.
+
+    Returns `unavailable` rather than raising on every failure path: no server,
+    a non-200, a body that is not JSON, or JSON that is not the agreed shape.
+    Enrichment is optional and the caller must never have to handle it.
+
+    The timeout is generous because a cold model loads weights on the first
+    call. Nothing interactive waits on this -- it runs once, to fill the cache.
     """
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not key:
-        return Observations(source="unavailable")
-
     body = json.dumps(
         {
             "model": MODEL,
-            "max_tokens": 200,
-            "messages": [{"role": "user", "content": PROMPT.format(description=description)}],
+            "prompt": PROMPT.format(description=description),
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0, "num_predict": 200},
         }
     ).encode("utf-8")
     request = urllib.request.Request(
-        API_URL,
-        data=body,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-        },
+        API_URL, data=body, headers={"content-type": "application/json"}
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        text = "".join(
-            block.get("text", "") for block in payload.get("content", []) if isinstance(block, dict)
-        )
+        text = payload.get("response", "")
         parsed = json.loads(text[text.index("{") : text.rindex("}") + 1])
         markers = tuple(m for m in parsed.get("markers", []) if m in MARKERS)
         # A response naming only markers we do not recognise is malformed, not
@@ -317,7 +321,7 @@ def _captured_descriptions() -> list[tuple[str, str, str]]:
 
 @app.command()
 def main(
-    warm: bool = typer.Option(False, "--warm", help="Populate the cache. Needs ANTHROPIC_API_KEY."),
+    warm: bool = typer.Option(False, "--warm", help="Populate the cache from a local Ollama."),
     evaluate: bool = typer.Option(
         False, "--evaluate", help="Does the free text add anything over the enum key?"
     ),
@@ -333,9 +337,7 @@ def main(
     )
 
     if warm:
-        if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
-            typer.echo("ANTHROPIC_API_KEY is not set. Nothing to do.", err=True)
-            raise typer.Exit(code=2)
+        typer.echo(f"  model: {MODEL} via {API_URL}\n")
         written = 0
         for description in sorted(distinct):
             observations = observe(description, allow_network=True)
@@ -347,17 +349,16 @@ def main(
         typer.echo("")
         if not written:
             # This used to print "Cache written. Commit it." unconditionally --
-            # a claim of success on a run where every call had failed. The
-            # commonest cause is a key that is present but not valid: the check
-            # above passes on any non-empty string, a placeholder included.
+            # a claim of success on a run where every call had failed, which is
+            # how it was first hit.
             typer.echo(
                 f"    Nothing cached: all {len(distinct)} call(s) returned `unavailable`.",
                 err=True,
             )
             typer.echo(
-                "    ANTHROPIC_API_KEY is set, so either the key is being rejected, the\n"
-                "    network is unreachable, or the response was not the agreed shape.\n"
-                "    Check the value is a real key rather than a placeholder.",
+                f"    Is Ollama running, and is `{MODEL}` pulled?\n"
+                "        ollama serve\n"
+                f"        ollama pull {MODEL}",
                 err=True,
             )
             raise typer.Exit(code=1)
@@ -385,45 +386,76 @@ def _evaluate(rows: list[tuple[str, str, str]]) -> None:
     free text carry anything the enum `reason` did not already carry? If not,
     the component is inert on this data and should say so.
     """
-    typer.echo("Does the free text add information over the enum key?\n")
-    typer.echo(f"    {'enum reason':<38} {'markers from the text':<34} verdict")
-    typer.echo("    " + "-" * 96)
+    from recovery.classifier import load_classifier
+    from recovery.fixtures import load_captured_payments
+    from recovery.normalize import normalize_entity
 
-    informative = 0
+    classifier = load_classifier()
+    families = classifier.config.enrichment_families
+
+    typer.echo("Does the free text change what this system does?\n")
+    typer.echo(
+        f"    {'enum key -> band':<44} {'markers from the text':<30} effect"
+    )
+    typer.echo("    " + "-" * 104)
+
+    changed = 0
     uncached = 0
-    # Dedupe on the DESCRIPTION, not on the payload. Two payments carrying the
-    # same string are one parse and one cache entry; keying the set on the
-    # payment id made every row distinct and printed five where three exist.
-    distinct_rows = sorted({(reason, description) for _, reason, description in rows})
-    for reason, description in distinct_rows:
-        observations = observe(description)
+    seen: set[str] = set()
+
+    # Run the *real* path -- normalize, classify, refine -- rather than comparing
+    # strings. An earlier version scored "does the marker's first token appear in
+    # the enum reason", which called all three of these informative because
+    # `merchant` is not a substring of `international_transaction_not_allowed`.
+    # It was measuring spelling. The question that matters is whether the parse
+    # reaches a decision, and that is answerable by running it.
+    for payment in load_captured_payments():
+        description = payment.get("error_description")
+        if not description or description in seen:
+            continue
+        seen.add(description)
+
+        key = normalize_entity(payment, source_space=classifier.config.source_space)
+        before = classifier.classify(key)
+        after, observations, family = refine(before, description, families)
+
         if observations.source == "unavailable":
             uncached += 1
-            verdict = "NOT CACHED -- run --warm"
-        elif not observations.informative:
-            verdict = "adds nothing"
+            effect = "NOT CACHED -- run --warm"
+        elif family is not None:
+            changed += 1
+            effect = f"sets cause_family={family}"
+        elif before.band is not ConfidenceBand.LOW:
+            effect = f"no effect -- already {before.band.value}, enum sufficed"
+        elif before.cause_family:
+            effect = "no effect -- taxonomy already names the family"
         else:
-            # The honest test: does the marker restate the enum, or add to it?
-            restates = any(marker.split("_")[0] in reason for marker in observations.markers)
-            verdict = "RESTATES the enum" if restates else "adds a distinction"
-            informative += 0 if restates else 1
-        typer.echo(f"    {reason:<38} {str(list(observations.markers)):<34} {verdict}")
+            effect = "no effect -- marker maps to nothing"
+
+        label = f"{key.reason or '-'} -> {before.band.value}"
+        typer.echo(f"    {label:<44} {str(list(observations.markers)):<30} {effect}")
 
     typer.echo("")
     if uncached:
         typer.echo(
-            f"    {uncached} of {len(distinct_rows)} distinct description(s) not cached. "
-            "Run `--warm` with a key set."
+            f"    {uncached} of {len(seen)} distinct description(s) not cached. "
+            "Run `--warm` with Ollama running."
         )
         return
+
     typer.echo(
-        f"    {informative} of {len(distinct_rows)} distinct descriptions carry a "
-        "distinction the enum did not.\n"
+        f"    {changed} of {len(seen)} distinct descriptions changed a classification.\n"
     )
     typer.echo(
-        "    Read this as a smoke test, not an accuracy figure. Three distinct strings\n"
-        "    cannot measure a parser. What it can show is whether the component is inert\n"
-        "    on the evidence available -- and reporting that it is would be a result."
+        "    Read this as a smoke test, not an accuracy figure -- three strings cannot\n"
+        "    measure a parser. What it does show is where the component can bite: only\n"
+        "    on a LOW band with no authored cause family. Everywhere else the enum key\n"
+        "    was already sufficient, which is the reason the classifier is deterministic\n"
+        "    and not the reason to be embarrassed about it."
+    )
+    typer.echo(
+        "\n    The interesting case is absent: UPI is the primary rail and test mode\n"
+        "    never exposed it, so no UPI description has been read by anything."
     )
 
 

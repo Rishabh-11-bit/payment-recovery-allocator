@@ -36,13 +36,17 @@ command:
 | **Stopping rules** | `SURRENDER`, on two triggers: the mandate-execution budget is exhausted, or a contact was made and no execution is worth spending on this class. Recorded as a decision with a reason, never as an absence — and it surrenders the *attempt budget*, not the customer | `python -m recovery.explain pay_SYNTHEXPIRED01` |
 | **Audit trail** | Append-only, SQLite triggers block updates and deletes, every decision and every guard block reconstructable | `python -m recovery.explain --summary` |
 
-**On "agent", stated plainly: there is no LLM in this repository.** Not in the decision
-path, not in parsing, nowhere. `grep -ri llm` returns one comment saying so. That is a
-deliberate position and it is worth being exact about rather than leaving to inference.
+**On "agent".** This is an agent in the loop sense the brief describes — it perceives,
+diagnoses, decides under constraint, acts, and reconciles. What makes it one is the closed
+loop, not the presence of a model.
 
-This is an agent in the loop sense the brief describes — it perceives, diagnoses, decides
-under constraint, acts, and reconciles. What makes it one is the closed loop, not the
-presence of a model.
+**There is exactly one model, and it cannot reach the money decision.** C13 reads
+`error_description` — the one free-text field on the payload — with a local `llama3`
+through Ollama, and may set `cause_family`, which shapes what a *contact says*. It cannot
+change the class, the band, the confidence, or whether a capped execution is spent;
+`refine()` diffs every other field and a test fails if one moves. It is cache-first and
+offline: the parses are committed, so a clone with no model running gets identical
+results.
 
 **Why no model.** The classifier keys on `(method, source, step, reason)`, and all four
 are documented enum fields. They are already structured; there is nothing to infer. A

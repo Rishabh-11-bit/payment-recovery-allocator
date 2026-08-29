@@ -165,9 +165,30 @@ def test_observe_never_reaches_the_network_unless_asked(tmp_path, monkeypatch):
     assert observe(DESCRIPTION, cache_dir=tmp_path).source == "unavailable"
 
 
-def test_a_missing_api_key_is_unavailable_not_an_error(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert call_model(DESCRIPTION).source == "unavailable"
+def test_no_model_server_is_unavailable_not_an_error(monkeypatch):
+    """The component runs against a local Ollama, which is usually not running.
+
+    A judge cloning this repo has the committed cache and no model. That has to
+    be a no-op, not a stack trace -- so an unreachable server degrades exactly
+    like a cache miss.
+    """
+    monkeypatch.setattr(
+        "recovery.enrich.API_URL", "http://127.0.0.1:9/api/generate"
+    )  # port 9 is discard; nothing listens
+    assert call_model(DESCRIPTION, timeout=2.0).source == "unavailable"
+
+
+def test_the_committed_cache_covers_every_captured_description():
+    """The cache is the artefact, not the model. If a description loses its
+    parse, the evaluation silently reports "not cached" instead of a result."""
+    from recovery.fixtures import load_captured_payments
+
+    for payment in load_captured_payments():
+        description = payment.get("error_description")
+        if description:
+            assert read_cache(description) is not None, (
+                f"no committed parse for {description[:60]!r} -- run --warm"
+            )
 
 
 def test_a_corrupt_cache_entry_degrades_to_nothing(tmp_path, families):

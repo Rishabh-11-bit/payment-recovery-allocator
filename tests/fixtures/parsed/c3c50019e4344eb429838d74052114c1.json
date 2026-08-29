@@ -1,0 +1,8 @@
+{
+  "description": "Your payment has been cancelled. Try again or complete the payment later.",
+  "markers": [
+    "customer_abandoned"
+  ],
+  "model": "llama3:latest",
+  "prompt_version": "1"
+}
