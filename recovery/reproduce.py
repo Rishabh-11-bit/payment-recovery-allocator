@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+import time
 
 import typer
 
@@ -68,10 +69,37 @@ REPLAY_COUNT = 10
 
 
 def _fresh_store(path: pathlib.Path) -> Store:
-    for suffix in ("", "-wal", "-shm"):
-        candidate = path.with_name(path.name + suffix)
-        if candidate.exists():
-            candidate.unlink()
+    """Recreate the database from scratch, tolerating a lingering file handle.
+
+    On Windows an open SQLite handle makes `unlink` raise `PermissionError`, and
+    a handle can outlive the process that held it by a moment -- an interrupted
+    run, or an `explain` session that has only just exited. Deleting a fixed
+    path is therefore not reliable, and this is a command a reviewer runs live.
+
+    So it retries briefly, and if the file still will not go it says which
+    process to look for rather than surfacing a raw traceback from `pathlib`.
+    """
+    for attempt in range(5):
+        blocked: OSError | None = None
+        for suffix in ("", "-wal", "-shm"):
+            candidate = path.with_name(path.name + suffix)
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError as error:  # PermissionError on Windows
+                blocked = error
+        if blocked is None:
+            break
+        if attempt == 4:
+            typer.echo(
+                f"\nCannot recreate {path}: it is open in another process.\n"
+                "  Close any `python -m recovery.explain` session, or end a stray\n"
+                "  python process, then run this again. The database is disposable;\n"
+                "  nothing is lost by deleting it by hand.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        time.sleep(0.2 * (attempt + 1))
+
     store = Store(path)
     store.initialise()
     return store
@@ -156,14 +184,20 @@ def main(
         marker = f"[{event.event_type.value}]"
         typer.echo(f"    {event.seq:>3}  {marker:<36} {_detail(event.detail)}")
 
-    passed = _policy_table_section() and passed
-    passed = _trace_cases_section(store, config, gateway, classifier) and passed
-    passed = _c2_section(classifier) and passed
-    passed = _c5_section(config, classifier, profile) and passed
-    passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
-    passed = _c8_section(config, classifier, sweep_worlds, profile) and passed
-
-    store.close()
+    try:
+        passed = _policy_table_section() and passed
+        passed = _trace_cases_section(store, config, gateway, classifier) and passed
+        passed = _c2_section(classifier) and passed
+        passed = _c5_section(config, classifier, profile) and passed
+        passed = _c7_section(config, classifier, db_path.parent, c7_sequences) and passed
+        passed = _c8_section(config, classifier, sweep_worlds, profile) and passed
+    finally:
+        # Always, not only on success. Without this a section that raises -- or
+        # a run interrupted with Ctrl-C -- leaves the SQLite handle open, and on
+        # Windows the *next* run then cannot delete the file it is about to
+        # recreate. The failure surfaces as a PermissionError on a later,
+        # unrelated invocation, which is a long way from its cause.
+        store.close()
     typer.echo("\nreproduce: " + ("OK" if passed else "FAILED"))
     if not passed:
         sys.exit(1)
