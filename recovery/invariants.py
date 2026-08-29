@@ -513,20 +513,40 @@ def search(
     db_path = tmp_dir / "invariants.db"
 
     explored = 0
-    for _ in range(sequences):
-        for suffix in ("", "-wal", "-shm"):
-            candidate = db_path.with_name(db_path.name + suffix)
-            if candidate.exists():
-                candidate.unlink()
+    for index in range(sequences):
+        # A fresh filename per sequence rather than deleting and recreating one.
+        #
+        # This loop runs up to several thousand times, and every iteration used
+        # to unlink the same path before reopening it. On Windows an open SQLite
+        # handle makes unlink raise PermissionError, so that was one filesystem
+        # race per sequence -- and `execute` opens the store before it can
+        # return it, so any exception inside it leaves a handle the caller never
+        # sees and cannot close. A long search was the most likely place to hit
+        # it and the worst place to hit it, because the run is measured in
+        # minutes and the failure arrives at the end.
+        #
+        # Deleting after closing, rather than before opening, removes the race
+        # instead of narrowing it.
+        attempt_db = db_path.with_name(f"{db_path.stem}-{index}{db_path.suffix}")
 
         scenario = random_scenario(rng)
         explored += 1
         actions_executed += len(scenario.actions)
-        store, trace = execute(scenario, config, classifier, db_path)
+        store = None
         try:
+            store, trace = execute(scenario, config, classifier, attempt_db)
             violations.extend(check(scenario, store, trace, config))
         finally:
-            store.close()
+            if store is not None:
+                store.close()
+            for suffix in ("", "-wal", "-shm"):
+                candidate = attempt_db.with_name(attempt_db.name + suffix)
+                try:
+                    candidate.unlink(missing_ok=True)
+                except OSError:
+                    # Best effort. A file we could not remove is litter in a
+                    # scratch directory, not a reason to abandon the search.
+                    pass
         if violations:
             # Stop at the first violation. `explored` is the count actually run,
             # not the budget -- reporting the budget after an early stop would
