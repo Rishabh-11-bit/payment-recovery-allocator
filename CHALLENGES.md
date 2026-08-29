@@ -1349,7 +1349,88 @@ count.
 
 ---
 
-## 019 — _(next entry)_
+## 019 — A number that confirmed the ambiguity claim actually undermined it
+
+**Date:** Phase 3
+**Tags:** `#evaluation` `#data` `#domain`
+
+**Problem**
+Built a check the taxonomy had never had: does confidence actually predict correctness?
+Pool the synthetic batches, compare each classification to ground truth, split by band.
+
+Two results came back that should not have been reassuring, and my first instinct was
+that they were:
+
+- **The six deliberately-low-confidence rows scored 88.8% on their own raw guess** —
+  higher than the HIGH band's 84.5%. Read carelessly, that says the rows flagged as
+  structurally ambiguous were not actually ambiguous.
+- **MODERATE was 0/0.** Read carelessly, that says the check is broken.
+
+**Diagnosis**
+Neither reading survives looking at which key is doing the work.
+
+**The 88.8% is one key.** `upi/beneficiary_bank/payment_debit_response/mandate_revoked`
+is 56% of the entire LOW-with-a-guess sample (593 of 1,059). Its note names a real
+ambiguity: the code can mean a genuine customer revocation, or the beneficiary bank
+surfacing its own mandate-state error under the same reason. Checked the simulator's
+`EMISSIONS` table for the second cause — **there is no channel for it.** The key is
+emitted by exactly one true class, TERMINAL, full stop. So a high score here does not
+confirm the ambiguity was overstated. It confirms the simulator cannot produce the case
+the row exists to guard against — the alternate cause was never in the data the score
+was computed over. A synthetic ground truth cannot referee a domain claim about a cause
+it does not generate, which is the same shape as the caveat `coverage.py` already
+carries about the unmapped-keys list, arriving through a new check rather than a new
+insight.
+
+**MODERATE 0/0 is two different facts wearing one number.** Two of the four
+MODERATE-band rules (`mandate_creation_expired`, `mandate_creation_timeout`) are
+genuinely unreachable — no ingest path produces them, already flagged
+`unreachable: true`. The other two (`card_enrollment_check`,
+`reqauth_mandate_not_acknowledged`) are **real, reachable rules in production** that the
+synthetic generator's `EMISSIONS` table — a fixed, simplified subset of the documented
+reason codes — simply never happens to emit. Pointing a reader at the unreachable-rows
+section would have been correct for two of the four and silently wrong for the other
+two, which is worse than no explanation: it looks authoritative and misleads on exactly
+the two rules a reader would most want to trust it about.
+
+**Options**
+1. Report the raw numbers with no comment — rejected. An 88.8% next to a bare "LOW,
+   informational" label reads as the ambiguity being disproven, and a panel member
+   skimming the output would draw exactly that conclusion in one glance
+2. Drop the LOW-band figure from the report entirely — rejected. The number is real and
+   the mechanism producing it is worth showing; removing it hides a genuine limitation
+   of synthetic evaluation rather than stating it
+3. Print the number with the specific mechanism that produces it, keyed to the actual
+   emission table rather than a general disclaimer
+
+**Resolution**
+Option 3. `recovery/coverage.py` now prints the dominant key, its share of the sample,
+and the concrete fact that the simulator has no emission channel for the cause the
+ambiguity is about — traced with a script before writing a word of the explanation, not
+asserted from memory. The MODERATE explanation is split into its two real categories
+rather than pointing at one section that is only half right.
+`tests/test_horizon_and_coverage.py` pins the emission-channel fact directly against
+`EMISSIONS`, not through the printed report, so a second channel being added later
+breaks the test that explains the number rather than leaving a stale explanation next to
+a number that has moved.
+
+**Why it mattered**
+**A synthetic-data metric that happens to agree with an authored judgment is not
+evidence for the judgment — it is corroboration bounded by everything the generator
+does not model,** and a number that inverts what it looks like it says is far more
+dangerous than a number that is simply wrong, because wrong numbers get checked and
+inverted ones get believed. The instinct on seeing 88.8% next to a "deliberately low
+confidence" label was to read it as vindication. It was the opposite: an absence in the
+simulator wearing the shape of a good outcome.
+
+The general form: whenever a check's answer would flatter something already believed,
+that is exactly the answer that needs the source traced before it gets written down —
+not because it is likely wrong, but because an answer that confirms what you already
+think is the one you are least likely to interrogate.
+
+---
+
+## 020 — _(next entry)_
 
 **Date:**
 **Tags:**

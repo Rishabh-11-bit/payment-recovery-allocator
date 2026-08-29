@@ -359,3 +359,58 @@ def test_only_the_two_high_purity_keys_remain_unmapped(classifier):
     report = analyse(classifier, seeds=(11, 42, 101, 202, 303))
     remaining = {stats.describe for stats in report.unmapped_keys}
     assert all("insufficient_funds" in key for key in remaining), remaining
+
+
+# --------------------------------------------------- band vs. correctness --- #
+
+
+def test_high_band_accuracy_is_computed_from_true_class(classifier):
+    """A structural check, not a pinned figure: the report must be capable of
+    finding the classifier wrong at HIGH -- otherwise it isn't measuring
+    anything. Uses the real batches, so the exact number can drift with the
+    taxonomy; correctness of the mechanism should not."""
+    from recovery.coverage import band_accuracy
+
+    report = band_accuracy(classifier, seeds=(11, 42, 101, 202, 303))
+    assert report.high.total > 0, "no HIGH-band key fired on this batch"
+    assert 0.0 < report.high.accuracy < 1.0, (
+        "HIGH accuracy at 0% or 100% on synthetic noise is a sign the check "
+        "isn't reading true_class, not a sign of a perfect classifier"
+    )
+
+
+def test_low_band_failure_class_is_never_scored_as_a_guess(classifier):
+    """The one distinction the whole check rests on: `failure_class` on a LOW
+    row is the cost model's fallback, not the rule's guess, and must never be
+    compared to ground truth as though it were one."""
+    from recovery.coverage import band_accuracy
+
+    report = band_accuracy(classifier, seeds=(11, 42, 101, 202, 303))
+    # The LOW-band group is explicitly the *rule's raw guess* before cost
+    # resolution -- if this ever starts reading failure_class instead of
+    # cost_resolved_from, the LOW band's uniform TERMINAL fallback would
+    # dominate its own accuracy figure regardless of what any rule said.
+    assert report.low_rule_guess.band.value == "LOW"
+
+
+def test_the_mandate_revoked_key_has_no_alternate_cause_in_the_simulator():
+    """CHALLENGES 019. The finding the report explains: the rule's note
+    describes two possible causes behind `mandate_revoked`; the simulator's
+    emission table has a channel for only one of them. This is what makes the
+    LOW-band accuracy figure uninformative about the ambiguity, not evidence
+    against it -- and it is a fact about the generator, so it's pinned
+    directly rather than through the printed report."""
+    from recovery.sim.batch import EMISSIONS
+
+    channels = [
+        (rail, cls.value)
+        for rail, table in EMISSIONS.items()
+        for cls, (source, step, reason) in table.items()
+        if (source, step, reason)
+        == ("beneficiary_bank", "payment_debit_response", "mandate_revoked")
+    ]
+    assert channels == [("upi", "TERMINAL")], (
+        "expected exactly one emission channel for this key; if a second one "
+        "was added, the coverage.py note explaining the LOW-band figure is "
+        "now describing a generator that no longer matches it"
+    )

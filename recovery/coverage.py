@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 import typer
 
 from recovery.classifier import DEFAULT_CLASSIFIER_PATH, Classifier, load_classifier
+from recovery.models import ConfidenceBand
 from recovery.fixtures import load_captured_payments
 from recovery.normalize import normalize_entity
 from recovery.sim.batch import generate_batch
@@ -131,6 +132,100 @@ def analyse(
     )
 
 
+@dataclass
+class BandRow:
+    """One confidence band's outcomes, pooled across seeds."""
+
+    band: ConfidenceBand
+    correct: int = 0
+    total: int = 0
+
+    @property
+    def accuracy(self) -> float:
+        return self.correct / self.total if self.total else 0.0
+
+
+@dataclass
+class BandAccuracyReport:
+    """Does confidence predict correctness? -- and the one comparison that
+    would be dishonest to make, named rather than silently included.
+
+    HIGH and MODERATE are real classification attempts: `failure_class` is
+    the rule's answer, and comparing it to ground truth asks the question the
+    band claims to answer -- is a HIGH-confidence guess right more often than
+    a MODERATE one, which is what "confidence" is supposed to mean.
+
+    LOW is different in kind, not just in threshold. `failure_class` on a LOW
+    row is the cost model's minimax-safe fallback -- deliberately not the
+    rule's guess, precisely because the guess is not trusted. Scoring that
+    against ground truth would grade a guess the system explicitly declined
+    to make. What CAN be asked of a LOW row that had a rule match is whether
+    the rule's raw guess (`cost_resolved_from`) would have been right --
+    informational only, since the system never acts on it.
+    """
+
+    high: BandRow
+    moderate: BandRow
+    # LOW rows that matched a rule (mapped=True): how often the rule's own
+    # untrusted guess would have been correct, had it been trusted. Not
+    # compared against HIGH/MODERATE -- it answers a different question.
+    low_rule_guess: BandRow
+    seeds: tuple[int, ...]
+
+    @property
+    def monotonic(self) -> bool:
+        """The ordering a confidence band should produce, if it means anything."""
+        if not (self.high.total and self.moderate.total):
+            return True  # nothing to violate
+        return self.high.accuracy >= self.moderate.accuracy
+
+
+def band_accuracy(
+    classifier: Classifier,
+    seeds: tuple[int, ...] = DEFAULT_SEEDS,
+    *,
+    worlds_path: pathlib.Path | str = DEFAULT_WORLDS_PATH,
+) -> BandAccuracyReport:
+    """Pool the same batches `analyse` draws and score confidence against truth.
+
+    Circularity caveat is the same one `analyse`'s docstring already states:
+    ground truth here is the simulator's own emission table, hand-written by
+    the same person who wrote the taxonomy. Agreement is corroborating, not
+    proof -- and the confidence bands are themselves authored from reading
+    Razorpay's documentation, not fit to this or any dataset, which is what
+    makes the question worth asking rather than circular by construction: an
+    authored ordering either predicts correctness or it does not, and nothing
+    here adjusts the bands to make it so.
+    """
+    raw = load_world_config(worlds_path)
+    high = BandRow(band=ConfidenceBand.HIGH)
+    moderate = BandRow(band=ConfidenceBand.MODERATE)
+    low_guess = BandRow(band=ConfidenceBand.LOW)
+
+    for seed in seeds:
+        world = sample_world(seed=seed, raw=raw)
+        for failure in generate_batch(world):
+            key = normalize_entity(
+                failure.observed(), source_space=classifier.config.source_space
+            )
+            result = classifier.classify(key)
+            truth = failure.true_class.value
+
+            if result.band is ConfidenceBand.HIGH:
+                high.total += 1
+                high.correct += result.failure_class.value == truth
+            elif result.band is ConfidenceBand.MODERATE:
+                moderate.total += 1
+                moderate.correct += result.failure_class.value == truth
+            elif result.mapped and result.cost_resolved_from is not None:
+                low_guess.total += 1
+                low_guess.correct += result.cost_resolved_from.value == truth
+
+    return BandAccuracyReport(
+        high=high, moderate=moderate, low_rule_guess=low_guess, seeds=seeds
+    )
+
+
 @app.command()
 def main(
     classifier_path: pathlib.Path = typer.Option(DEFAULT_CLASSIFIER_PATH, "--classifier"),
@@ -141,13 +236,16 @@ def main(
     ),
 ) -> None:
     classifier = load_classifier(classifier_path, allow_stub=True)
-    report = analyse(classifier, tuple(int(s) for s in seeds.split(",")))
+    seed_tuple = tuple(int(s) for s in seeds.split(","))
+    report = analyse(classifier, seed_tuple)
 
     typer.echo(
         f"Classifier coverage over {report.total:,} synthetic failures "
         f"({len(report.seeds)} world seeds)\n"
     )
     typer.echo(f"  mapped by a rule : {report.mapped:>6,}  ({report.coverage:.1%})")
+
+    _echo_band_accuracy(classifier, seed_tuple)
     typer.echo(
         f"  unmapped         : {report.unmapped:>6,}  ({1 - report.coverage:.1%})"
         "   -> all of these fall to the LOW row"
@@ -224,6 +322,62 @@ def _echo_unreachable(classifier: Classifier) -> None:
     )
     typer.echo(
         "    in the rule total and contribute nothing to the coverage figure above."
+    )
+
+
+def _echo_band_accuracy(classifier: Classifier, seeds: tuple[int, ...]) -> None:
+    """Does confidence predict correctness? Printed once, right after coverage,
+    because a coverage percentage with no calibration check reads as more
+    trustworthy than it has earned."""
+    bacc = band_accuracy(classifier, seeds)
+    typer.echo("")
+    typer.echo("  confidence vs. correctness (does the band mean what it claims?)")
+    typer.echo("")
+    for row, label in ((bacc.high, "HIGH"), (bacc.moderate, "MODERATE")):
+        typer.echo(
+            f"    {label:<10} accuracy: {row.correct:>5,} / {row.total:<5,}  "
+            f"({row.accuracy:.1%})"
+        )
+    typer.echo(
+        f"    {'monotonic':<10} {'HIGH >= MODERATE' if bacc.monotonic else '*** VIOLATED ***'}"
+    )
+    if bacc.low_rule_guess.total:
+        typer.echo(
+            f"\n    LOW band, informational only -- the rule's own guess before cost\n"
+            f"    resolution, which the system never acts on: {bacc.low_rule_guess.correct:,} "
+            f"/ {bacc.low_rule_guess.total:,} ({bacc.low_rule_guess.accuracy:.1%})"
+        )
+        if bacc.low_rule_guess.accuracy >= bacc.high.accuracy and bacc.high.total:
+            typer.echo(
+                "\n    That LOW figure is not evidence the deliberately-low-confidence rows\n"
+                "    are actually confident. 56% of this sample is one key --\n"
+                "    upi/beneficiary_bank/payment_debit_response/mandate_revoked -- whose\n"
+                "    note names a real ambiguity: the code can mean a genuine customer\n"
+                "    revocation, or the bank surfacing its own mandate-state error under\n"
+                "    the same reason. The simulator's emission table has no channel for the\n"
+                "    second cause at all -- this key is emitted by exactly one true class.\n"
+                "    So the simulator cannot produce the case the row exists to guard\n"
+                "    against, and a high score here confirms only that the simulator is\n"
+                "    structurally unable to test the claim, not that the claim was wrong.\n"
+                "    See CHALLENGES.md 019."
+            )
+    if not bacc.moderate.total:
+        typer.echo(
+            "\n    MODERATE is 0/0, and that is two different facts wearing one number.\n"
+            "    Two MODERATE rules (mandate_creation_expired, mandate_creation_timeout)\n"
+            "    are genuinely unreachable -- no ingest path produces them at all, see the\n"
+            "    UNREACHABLE ROWS section below. The other two (card_enrollment_check,\n"
+            "    reqauth_mandate_not_acknowledged) are real and reachable in production;\n"
+            "    `EMISSIONS` in sim/batch.py is a fixed subset of the documented reason\n"
+            "    codes and simply never happens to emit either. The zero here says nothing\n"
+            "    about whether those two rules are good rules -- only that this synthetic\n"
+            "    generator has never exercised them."
+        )
+    typer.echo(
+        "\n    Ground truth is the simulator's own emission table -- corroborating,\n"
+        "    not proof, and the caveat above the unmapped-keys list applies here too.\n"
+        "    The bands are authored from documentation, never fit to this data, which\n"
+        "    is what makes the ordering worth checking rather than circular."
     )
 
 
