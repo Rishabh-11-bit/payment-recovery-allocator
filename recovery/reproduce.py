@@ -620,6 +620,42 @@ def _c5_section(config, classifier, profile: str = "") -> bool:
         "    at a single hazard and never as a rupee LTV figure."
     )
 
+    # The batch money figure at a stated horizon. Printed here rather than only
+    # in the sensitivity table below, because "money recovered across a batch"
+    # is what the bar asks for and one cycle is not the only unit it can be
+    # measured in.
+    #
+    # Labelled as VALUE, not as recovered cash. It is the cycle recovery plus
+    # the revenue of mandates still alive at that horizon, and calling it
+    # anything else would be the overstatement this project spends its effort
+    # avoiding. It is a band across the hazard sweep at a fixed horizon -- a
+    # sensitivity, which CLAUDE.md permits -- never a single LTV number.
+    typer.echo(
+        "\n    Batch value at a stated remaining lifetime, Rs "
+        "(cycle recovery + surviving mandates,"
+    )
+    typer.echo("    min-max across the swept hazard range):\n")
+    typer.echo(f"      {'months':<9}" + "".join(f"{n:>26}" for n in ("A", "B", "C")))
+    for months in (6, 12, 24):
+        cells = ""
+        for name in ("A", "B", "C"):
+            low, high = sweep.value_band_inr(name, months)
+            cells += f"{low:>11,.0f}-{high:<14,.0f}"
+        typer.echo(f"      {months:<9}" + cells)
+
+    ahead = [
+        months
+        for months in (6, 12, 24)
+        if sweep.value_band_inr("C", months)[0] > sweep.value_band_inr("A", months)[0]
+        and sweep.value_band_inr("C", months)[0] > sweep.value_band_inr("B", months)[0]
+    ]
+    if ahead:
+        typer.echo(
+            f"\n    From {min(ahead)} months on, Arm C's worst case across the hazard range\n"
+            "    beats both other arms' worst cases. The cycle figure above and this one\n"
+            "    are the same batch measured over different lengths of time."
+        )
+
     typer.echo("\n    exit doors -- halted preserves mandate authority, revoked destroys it:")
     for incumbent in ("A", "B"):
         band = exchange_rate_band(

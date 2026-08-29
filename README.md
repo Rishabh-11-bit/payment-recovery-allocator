@@ -224,6 +224,31 @@ INFRASTRUCTURE at 48% and TERMINAL at 36% — a world where most failures are tr
 retrying blindly works, so C should do badly. **Reporting the worse number under the more
 defensible profile is the point.** The single-world figure was always a draw, not a result.
 
+### The batch figure, at both units
+
+One cycle is one unit. It is not the only one, and the bar does not name it — it asks for
+money recovered across a batch. The same batch, measured over a stated remaining lifetime:
+
+| months | A | B | **C** |
+|---|---|---|---|
+| 6 | 2,122,820–2,232,005 | 1,983,772–2,247,523 | **2,198,070–2,227,491** |
+| 12 | 4,100,537–4,312,460 | 3,807,382–4,327,978 | **4,287,087–4,346,473** |
+| 24 | 8,055,971–8,473,371 | 7,454,600–8,488,889 | **8,465,122–8,584,438** |
+
+From 6 months on, **Arm C's worst case across the hazard range beats both other arms'
+worst cases.** At 24 months its floor is ₹409k above the baseline's and ₹1.01M above
+contact-everyone's.
+
+**Labelled precisely, because the label is the whole point.** This is *value* — cycle
+recovery plus the revenue of mandates still alive at that horizon — not cash collected
+this month. It is a band across the swept hazard range at a fixed horizon, which is a
+sensitivity and not an LTV estimate; there is no single number here and there is not
+meant to be. Calling it "money recovered" would be the overstatement this project spends
+its whole effort avoiding.
+
+Both figures are the same batch. The cycle number is what the baseline optimises for; the
+horizon number is what a mandate is actually worth.
+
 ### The claim: horizon crossover
 
 A mandate is an annuity. An arm that recovers less now while keeping more mandates alive
