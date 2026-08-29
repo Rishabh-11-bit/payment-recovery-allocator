@@ -8,6 +8,26 @@ sweep, C9 calibration, C10 rail actions, C11 storm governor, C12 holdout harness
 The classifier's cost matrix and contact costs are authored. `mandate.class_multiplier`
 was tested and deleted — see `ASSUMPTIONS.md`.
 
+```mermaid
+flowchart LR
+    W["Webhook\npayment.failed"] --> ING["Ingest\nC1 — dedupe, filter"]
+    ING --> NRM["Normalize + Classify\nC2 — 4 classes × 3 bands"]
+    NRM --> ALL["Allocate\nC3 — 12-cell table"]
+    ALL --> GRD{"Guard\nC4"}
+    GRD -->|blocked| AUD1["Audit: guard.blocked\n+ reason"]
+    GRD -->|admitted| EXE["Execute\nC10 — Payment Link / schedule"]
+    EXE --> REC["Reconcile\nauthoritative state refresh"]
+    REC --> LED["Audit Ledger\nC6 — append-only"]
+    LED --> MEA["Measure\nC5 + C8 — 3 arms, swept"]
+
+    style GRD fill:#3a2a1a,stroke:#c98a3a,color:#fff
+    style LED fill:#1a2a3a,stroke:#3a7ac9,color:#fff
+```
+
+Every box is a component with its own module, its own tests, and its own line in
+[`python -m recovery.reproduce`](#reproducing-results)'s output — nothing above is drawn from
+memory of what the code does.
+
 ---
 
 ## Thesis
@@ -39,6 +59,17 @@ command:
 **On "agent".** This is an agent in the loop sense the brief describes — it perceives,
 diagnoses, decides under constraint, acts, and reconciles. What makes it one is the closed
 loop, not the presence of a model.
+
+```mermaid
+flowchart LR
+    D1["Detect"] --> D2["Diagnose"]
+    D2 --> D3["Decide\nunder constraint"]
+    D3 --> D4["Act"]
+    D4 --> D5["Reconcile"]
+    D5 -.-> D1
+```
+
+Five verbs, one loop, closing on itself each cycle — not a single model call.
 
 **There is exactly one model, and it cannot reach the money decision.** C13 reads
 `error_description` — the one free-text field on the payload — with a local `llama3`
@@ -473,6 +504,16 @@ already abandoned once. Reorder costs nothing if wrong; exclusion costs the reco
 
 `OFFER_RAIL_MIGRATION` builds an *offer* validated against the documented graph — manual
 charging of a domestic card is not supported, so there is no version that executes.
+
+```mermaid
+flowchart LR
+    UPI(("UPI")) <--> Card(("Card"))
+    Emandate(("Emandate")) <--> Card
+```
+
+Card is the only hub. UPI and Emandate can each migrate to Card and back, but never to
+each other — Razorpay does not document why, and `CLAUDE.md`'s "Still open" list records
+that as a question rather than an assumed answer.
 
 **Dispatch is real, not simulated-only.** `recovery/executor.py` mirrors the gateway's
 adapter pattern: `SimulatedExecutor` is the default everywhere — the worker, every test,
