@@ -336,11 +336,35 @@ def main(
         if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
             typer.echo("ANTHROPIC_API_KEY is not set. Nothing to do.", err=True)
             raise typer.Exit(code=2)
+        written = 0
         for description in sorted(distinct):
             observations = observe(description, allow_network=True)
+            if observations.source in ("model", "cache"):
+                written += 1
             typer.echo(f"  [{observations.source}] {list(observations.markers)}")
             typer.echo(f"      {description[:88]}")
-        typer.echo("\nCache written to tests/fixtures/parsed/. Commit it.")
+
+        typer.echo("")
+        if not written:
+            # This used to print "Cache written. Commit it." unconditionally --
+            # a claim of success on a run where every call had failed. The
+            # commonest cause is a key that is present but not valid: the check
+            # above passes on any non-empty string, a placeholder included.
+            typer.echo(
+                f"    Nothing cached: all {len(distinct)} call(s) returned `unavailable`.",
+                err=True,
+            )
+            typer.echo(
+                "    ANTHROPIC_API_KEY is set, so either the key is being rejected, the\n"
+                "    network is unreachable, or the response was not the agreed shape.\n"
+                "    Check the value is a real key rather than a placeholder.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        typer.echo(
+            f"    {written} of {len(distinct)} description(s) cached in {CACHE_DIR}. Commit it."
+        )
         return
 
     if evaluate:
