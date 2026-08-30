@@ -150,9 +150,18 @@ class GuardRequest:
     # When present it wins outright: the counter heuristics exist only for the
     # case where the subscription payload is not to hand.
     auth_attempts: int | None = None
-    # Razorpay rejects simultaneous operations on one token and asks for a
-    # 60-second wait. Two workers on one mandate is not hypothetical -- it is
-    # what the crash-reclaim path produces.
+    # Razorpay rejects simultaneous operations on one token --
+    # `concurrent_request_in_progress`, asking for a 60-second wait -- which
+    # is a real, documented error from the token cancel/update API, not a
+    # hypothetical race.
+    #
+    # This is NOT what protects against two workers claiming the same DB job:
+    # that is `claim_jobs`'s own reclaim semantics, a different mechanism,
+    # already exercised by the crash-reclaim path C7 generates. This field is
+    # never set by anything in the live path -- nothing here calls a token
+    # cancel/update endpoint, so nothing can receive the error this guards
+    # against. Tested and correct against an input the system cannot
+    # currently produce. See THREAT_MODEL.md #10.
     token_busy_until: dt.datetime | None = None
 
 

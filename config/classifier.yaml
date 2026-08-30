@@ -78,6 +78,13 @@ source_aliases: {}
 # `customer_onboarding` and `account_management` are here with no rule attached.
 # That is the point of recording them: they are steps that exist, and when a row
 # is eventually written for one it will validate rather than be rejected.
+#
+# Both are evidenced for UPI specifically -- Turbo UPI SDK error codes, absent
+# from the error-parameters reference entirely -- and generalised to the other
+# five methods on the reasoning that a generic onboarding/account flow step is
+# unlikely to be UPI-only, **not** on direct evidence for those five. Recorded
+# here rather than glossed over: this is the one place in this file's value
+# spaces where the entry is a plausible extension, not a documented fact.
 step_space:
   card: [payment_initiation, payment_creation, payment_authentication,
          payment_authorization, payment_capture, card_enrollment_check,
@@ -86,9 +93,14 @@ step_space:
   # pairing is the useful part: `payment_debit_request` broke on the way to the
   # bank, `payment_debit_response` means the bank answered and declined. One is
   # infrastructure, the other is a decision by the customer's bank.
+  #
+  # No `payment_authorization` here, unlike card/netbanking/emandate below: the
+  # documented UPI step list does not include it. Carrying it over from the
+  # other methods without evidence was a cross-reference finding, corrected
+  # rather than left in a file whose whole discipline is not doing that.
   upi: [payment_initiation, payment_creation, payment_authentication,
         payment_authentication_request, payment_authentication_response,
-        payment_authorization, payment_request,
+        payment_request,
         payment_request_beneficiary_details, payment_response_beneficiary_details,
         payment_debit_request, payment_debit_response,
         payment_credit_request, payment_credit_response,

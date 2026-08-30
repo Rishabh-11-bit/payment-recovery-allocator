@@ -255,6 +255,32 @@ observed failures.
 
 ---
 
+## 10. A guard check with a real API basis and no live trigger
+
+`GuardRequest.token_busy_until` and `_token_busy` in `recovery/guard.py` exist because
+Razorpay's token cancel/update API documents a real error —
+`concurrent_request_in_progress`, *"a cancellation or update operation is already in
+progress for this token… please wait at least 60 seconds before retrying."* The check
+is correct and tested (`test_token_busy_blocks_a_concurrent_operation`): given a
+`token_busy_until` in the future, it blocks.
+
+**Nothing in this project ever sets that field from a real signal.** Every call site
+that constructs a `GuardRequest` in the live path leaves it at the default `None`. The
+reason is structural, not an oversight found late: this error is *reactive* — it comes
+back from attempting a token cancel or update, and this project never calls that
+endpoint. `recovery/executor.py` dispatches Payment Links, not token operations.
+`OFFER_RAIL_MIGRATION` is customer-mediated by design (`CLAUDE.md`, rail-migration
+section), so there is no system-initiated token call anywhere for this response to
+answer.
+
+So the check is real, tested, and dead — proven correct against an input the live path
+cannot currently produce, the same class of gap `CHALLENGES.md` names for the
+`mandate_creation_*` taxonomy rows, one layer down in the guard rather than the
+classifier. Wiring it live would mean building the token cancel/update integration
+first, which is out of scope for the reasons `OFFER_RAIL_MIGRATION` already states.
+
+---
+
 ## What would change the shape of this document
 
 Two things, either of which would move several items from "unverified" to "verified or
