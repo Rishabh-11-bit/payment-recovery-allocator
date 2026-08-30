@@ -11,9 +11,12 @@ secondary, see CLAUDE.md):
 
 * **Non-peak only.** Autopay executions are barred 10:00-13:00 and
   17:00-21:30 IST.
-* **Pre-debit notification, >=24h.** The PDN is a prerequisite: if it fails,
-  the debit fails. A PDN sent at or after 23:50 is rejected when the debit date
-  is T+1, so the effective cutoff is earlier than a naive 24h subtraction.
+* **Pre-debit notification, rail-specific (25h UPI / 36h card).** The PDN is a
+  prerequisite: if it fails, the debit fails. NPCI's floor is 24h; a flat 24h
+  passes the regulator and fails the API, which is why `pdn_lead_for(rail)`
+  reads the per-rail figure rather than a single constant. A PDN sent at or
+  after 23:50 is rejected when the debit date is T+1, so the effective cutoff
+  is earlier than a naive same-day subtraction.
 * **Attempt cap of 4.** One initial execution plus three retries, ever. Checked
   by the environment, not by the arm.
 
@@ -88,8 +91,8 @@ class ComplianceCalendar:
     ) -> dt.datetime:
         """Latest moment a PDN may be sent for a debit at `debit_at`.
 
-        The >=24h lead time, tightened by the 23:50 cutoff rule when the debit
-        lands on the following calendar day.
+        The rail-specific lead time from `pdn_lead_for`, tightened by the 23:50
+        cutoff rule when the debit lands on the following calendar day.
         """
         debit_ist = debit_at.astimezone(IST)
         deadline = debit_ist - dt.timedelta(hours=self.pdn_lead_for(rail))

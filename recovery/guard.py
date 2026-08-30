@@ -21,7 +21,7 @@ decides what is *permitted*, and the two are kept apart on purpose:
 |---|---|
 | Mandate-execution cap of 4 | NPCI: 1 initial execution + 3 retries, ever |
 | Non-peak window | NPCI: 10:00-13:00 and 17:00-21:30 IST barred |
-| PDN lead time >= 24h, with the 23:50 cutoff | NPCI: the notification is a prerequisite |
+| PDN lead time, rail-specific (25h UPI / 36h card), with the 23:50 cutoff | NPCI: the notification is a prerequisite |
 | Prior attempt resolved | Emandate is asynchronous |
 | Contact budget | Mandate survival: contact is not free |
 | Contact cooldown | Three notices in three days is how a mandate gets cancelled |

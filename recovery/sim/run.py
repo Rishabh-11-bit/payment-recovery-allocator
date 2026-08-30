@@ -21,7 +21,7 @@ from recovery.sim.metrics import ArmMetrics
 from recovery.sim.world import World
 
 # Arms decide early, before the non-peak morning window, so a T+1 attempt has
-# room to clear the 24h PDN lead time.
+# room to clear the rail's PDN lead time (25h UPI / 36h card).
 DECISION_TIME = dt.time(1, 0)
 
 

@@ -104,8 +104,9 @@ debits; worth checking before it goes in a threat model as fact.
 
 ## 5. A merchant disables a rail under a scheduled attempt
 
-Execution is decided ≥24h in advance. In that window the merchant can change their
-configuration — turn off UPI, drop a card network, change their Payment Link defaults.
+Execution is decided ≥25h in advance on UPI, ≥36h on cards. In that window the merchant
+can change their configuration — turn off UPI, drop a card network, change their
+Payment Link defaults.
 
 - A scheduled mandate execution against a rail the merchant has since disabled will
   fail, and it will fail *having consumed one of four capped executions*.

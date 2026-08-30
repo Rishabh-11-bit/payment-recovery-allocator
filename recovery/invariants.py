@@ -214,7 +214,8 @@ def execute(
 
         elif action.step is Step.SHIFT_PDN_WINDOW:
             # The scheduled execution slides toward the decision moment until
-            # the 24h pre-debit notification lead time can no longer be met.
+            # the rail's pre-debit notification lead time (25h UPI / 36h card)
+            # can no longer be met.
             pdn_shift_hours += 9
 
         # --- Admission. Every scheduled execution passes the guard. ---------
