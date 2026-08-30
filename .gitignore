@@ -12,6 +12,9 @@ build/
 .mypy_cache/
 .ruff_cache/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite3
 out/
 reports/
