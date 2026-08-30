@@ -1,6 +1,7 @@
-# Payment Failure Recovery — attempt allocation under a capped retry budget
+# Mandate Retry Sequencer — attempt allocation under a capped retry budget
 
-Submission for the Razorpay AI Builder Internship 2026 — Track 03, AI Revenue Recovery.
+**Rishabh Gaikwad** · Submission for the Razorpay AI Builder Internship 2026 — Track 03,
+AI Revenue Recovery · [github.com/Rishabh-11-bit](https://github.com/Rishabh-11-bit)
 
 **Status:** Phase 3 — all twelve components built. C1 event core, C2 classifier, C3 allocator,
 C4 guard, C5 simulator and three arms, C6 audit ledger, C7 property invariants, C8 robustness

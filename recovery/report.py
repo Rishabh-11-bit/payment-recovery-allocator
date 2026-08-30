@@ -266,7 +266,7 @@ def render(data: ReportData) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Payment Recovery Allocator -- Report</title>
+<title>Mandate Retry Sequencer -- Report</title>
 <style>
   :root {{
     --ink: #1e293b; --muted: #64748b; --bg: #ffffff; --panel: #f8fafc;
